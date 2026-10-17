@@ -12,6 +12,7 @@ import struct
 import json
 import string
 import argparse
+import collections
 import array
 import re
 from pathlib import Path
@@ -960,6 +961,7 @@ class TFTFile:
 
         # Parse component metadata from page/object records
         page_objects = self._parse_objects()
+        texts = self.getObjectTexts(page_objects) if page_objects else {}
 
         # Build block lookup: usercode offset → block object
         block_map = {addr: blk for addr, blk in blocks}
@@ -1034,6 +1036,8 @@ class TFTFile:
                         "x": obj["x"], "y": obj["y"],
                         "w": obj["w"], "h": obj["h"],
                     }
+                    if (page_num, obj_i) in texts:
+                        clean_obj["text"] = {str(k): v for k, v in sorted(texts[(page_num, obj_i)].items())}
                     if obj_i in obj_events:
                         clean_obj["events"] = obj_events[obj_i]
                         # Touch events that report to the host look like "prints 0x65,1 / prints dp,1 / prints N,1 /
@@ -1168,15 +1172,133 @@ class TFTFile:
                 x, y = struct.unpack_from("<hh", self.raw, off + 40)  # signed: components can be placed off-screen
                 w, h = struct.unpack_from("<HH", self.raw, off + 44)
                 type_name = self._nextion_type_names.get(type_code, f"unknown_0x{type_code:02x}")
+                slots = None
+                if rec_size >= 56 + 2 * self._attrSlots:
+                    slots = struct.unpack_from(f"<{self._attrSlots}H", self.raw, off + 56)
                 objects.append({
-                    "id": obj_id, "type": type_name,
+                    "id": obj_id, "type": type_name, "_type_code": type_code,
                     "x": x, "y": y, "w": w, "h": h,
-                    "_event_ptrs": event_ptrs,
+                    "_event_ptrs": event_ptrs, "_slots": slots,
                 })
                 obj_idx += 1
 
             result.append(objects)
         return result
+
+    # ---- Component attributes (text) -------------------------------------------------------------------------------
+    #
+    # Every object record has a list of 74 u16 attribute ids at +56 (0xffff = attribute not present). The ids of a page
+    # are local; the ids form one global space: global id = page base + local id, where a page's base follows from the
+    # previous page's base plus the id range of its objects (the id range of an object depends on its type, e.g. 41
+    # for a button, 39 for text, 33 for the page itself; the spans are learned from the file).
+    # Text labels are set by page code like
+    #   <cjmp ",N,1,"> <local pointer = global id = "text" attribute of an object> = "<utf-8 text>" <jmp>
+    # with N the language index. The pointer may belong to an object of another page. Slot 53 of text, button,
+    # scrolling-text and dual-state objects is the text attribute.
+    _attrSlots = 74
+    _txtSlot = 53
+    _txtTypes = (0x74, 0x62, 0x37, 0x35)
+
+    def _pageBlocks(self, page, pages):
+        """Yields (usercode offset, bytes) for the length prefixed blocks of a page."""
+        uc = self._getVal("usercode_address")
+        end = pages[page + 1]["code"] if page + 1 < len(pages) else self._getVal("static_usercode_address")
+        p = pages[page]["code"]
+        while p + 4 <= end:
+            n = struct.unpack_from("<I", self.raw, uc + p)[0]
+            if p + 4 + n > end:
+                break
+            yield p, self.raw[uc + p + 4:uc + p + 4 + n]
+            p += 4 + n
+
+    def getObjectTexts(self, page_objects=None):
+        """Returns {(page, object index): {language index: text}} for the text assigned by page code."""
+        page_objects = page_objects or self._parse_objects()
+        if not page_objects or any(o["_slots"] is None for pg in page_objects for o in pg):
+            return {}
+        pa = self._getVal("unknown_pages_address")
+        prs = self.page_record_size
+        if prs < 8:
+            return {}
+        pages = [{"code": struct.unpack_from("<I", self.raw, pa + prs * i + 4)[0]} for i in range(len(page_objects))]
+        # assignments per page: list of (pointer, language, text)
+        assigns = []
+        for pi in range(len(pages)):
+            lang, lst = None, []
+            for _, b in self._pageBlocks(pi, pages):
+                m = re.match(rb"\x09\x00\x04\x05\x14\x00\x00\x00,(\d+),1,", b)
+                if m:
+                    lang = int(m.group(1))
+                    continue
+                m = re.match(rb"\x01(....)\x3d\x22(.*)\x22\Z", b, flags=re.S)
+                if m:
+                    lst.append((struct.unpack("<I", m.group(1))[0], lang, m.group(2).decode("utf-8", "replace")))
+            assigns.append(lst)
+
+        def lo(o):
+            v = [x for x in o["_slots"] if x != 0xffff]
+            return min(v) if v else None
+
+        # id span per object type: distance between the first ids of consecutive objects (most common value)
+        votes = {}
+        for pg in page_objects:
+            for a, b in zip(pg, pg[1:]):
+                if lo(a) is not None and lo(b) is not None:
+                    votes.setdefault(a["_type_code"], collections.Counter())[lo(b) - lo(a)] += 1
+        span = {t: c.most_common(1)[0][0] for t, c in votes.items()}
+
+        def txt_ids(pi):
+            return {o["_slots"][self._txtSlot]: j for j, o in enumerate(page_objects[pi])
+                    if o["_type_code"] in self._txtTypes and o["_slots"][self._txtSlot] != 0xffff}
+
+        ptr_sets = [{a[0] for a in lst} for lst in assigns]
+
+        def fits(pi, base):
+            ids = txt_ids(pi)
+            return all((p - base) in ids for p in ptr_sets[pi])
+
+        def chain(first_base):
+            base = {1: first_base}
+            for pi in range(1, len(page_objects) - 1):
+                last = page_objects[pi][-1]
+                m0 = lo(last)
+                if m0 is None:
+                    m0 = max(x for o in page_objects[pi] for x in o["_slots"] if x != 0xffff) - span.get(last["_type_code"], 30)
+                pred = base[pi] + m0 + span.get(last["_type_code"], 30)
+                if not ptr_sets[pi + 1]:
+                    base[pi + 1] = pred
+                    continue
+                cands = [pred + d for d in (0, 1, 2, -1, 3) if fits(pi + 1, pred + d)]
+                if not cands:
+                    cands = sorted((b for b in range(pred - 80, pred + 81) if fits(pi + 1, b)), key=lambda b: abs(b - pred))
+                base[pi + 1] = cands[0] if cands else pred
+            return base
+
+        def mapped(base):
+            glob = {}
+            for pi in range(1, len(page_objects)):
+                for sl, j in txt_ids(pi).items():
+                    glob[base[pi] + sl] = (pi, j)
+            return glob
+
+        if len(page_objects) < 3:
+            return {}
+        best = None
+        for c in range(0, 200):
+            base = chain(c)
+            glob = mapped(base)
+            score = sum(1 for lst in assigns for a in lst if a[0] in glob)
+            if best is None or score > best[0]:
+                best = (score, base, glob)
+        score, base, glob = best
+        out = {}
+        for pi, lst in enumerate(assigns):
+            for ptr, lang, text in lst:
+                tgt = glob.get(ptr)
+                if tgt:
+                    out.setdefault(tgt, {})[lang if lang is not None else -1] = text
+        self.textMappedRatio = (score, sum(len(l) for l in assigns))
+        return out
 
     def _event_name(self, type_name, slot):
         """Get human-readable event name for a component type and slot index."""

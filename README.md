@@ -68,5 +68,10 @@ The HMI source file (and its license) can be found in this repository: https://g
   in the comment above `getPictureRecords()`. All pictures of the two TJC test files (88 and 475) decode; Nextion
   files use a different picture encoding and are not decoded.
 
+* Component text: labels that page code assigns per language are attached to the component (`text`: language index ->
+  string; the order seen in the Sovol file is 0 zh, 1 en, 2 ja, 3 de, 4 es, 5 fr, 6 pt, 7 it). Object attribute ids
+  (74 slots per object record) form one global id space; the mapping is described above `getObjectTexts()`. Text
+  that is only part of a component's initial memory image, and non-text attributes, are not decoded.
+
 Known limitations: series 4 uses the series 3 instruction set (not verified); Nextion example files still fall back
 to a flat block list instead of per-page output.

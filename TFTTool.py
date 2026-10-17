@@ -861,6 +861,69 @@ class TFTFile:
             ok += 1
         return ok, bad
 
+    # ---- Fonts ---------------------------------------------------------------------------------------------------
+    #
+    # The font section starts at header 2 "fonts_address" with fonts_count records of 44 bytes
+    #   <20 attribute bytes (byte 7 = height in pixels)> <data size:u32> <data offset:u32 (rel. to the section)>
+    #   <ff 00 01 01> <u32> <u32> <u32 = 0>
+    # The data of a font is <"1111"> <name, e.g. "4号全字库"> <encoding "utf-8"> and then a glyph table of 10-byte entries.
+    # ASCII style font (one block): per glyph, consecutive codes
+    #   <code:u16> <advance:u8> <0> <0> <data offset:u24> <data length:u16>
+    # (the offset is relative to 16 bytes before the end of the table; the glyph data follows the table).
+    # Full charset fonts: per glyph <advance:u8> <x offset:u8> <y offset:u8> <data offset:u16> <height:u8>
+    # <data length:u16> <index:u8> <block:u8>, in many blocks of 256 entries with empty placeholders (advance 6, length 0).
+    # The glyph data itself is a bit-oriented compressed stream (zero padded to bytes) that is NOT decoded.
+
+    def getFonts(self):
+        start = self._getVal("fonts_address")
+        count = self._getVal("fonts_count")
+        fonts = []
+        if start == 0 or count == 0 or start + 44 * count > len(self.raw):
+            return fonts
+        for i in range(count):
+            r = self.raw[start + 44 * i:start + 44 * i + 44]
+            size, off = struct.unpack_from("<II", r, 20)
+            if start + off + size > len(self.raw):
+                break
+            data = self.raw[start + off:start + off + size]
+            f = {"index": i, "height": r[7], "data_offset": start + off, "data_size": size, "attributes": r[:20].hex(" ")}
+            m = re.match(rb"1111(.*?)(utf-8|gb2312|iso-8859-\d+|big5|shift-jis)", data[:64], flags=re.I | re.S)
+            if m:
+                f["name"] = m.group(1).decode("utf-8", "replace")
+                f["encoding"] = m.group(2).decode().lower()
+                table = m.end()
+                if re.match(rb"ASCII", m.group(1), flags=re.I) or m.group(1).endswith(b"ASCII"):
+                    f["type"] = "ascii"
+                    f.update(self._asciiFontTable(data, table))
+                else:
+                    f["type"] = "charset"
+            fonts.append(f)
+        return fonts
+
+    @staticmethod
+    def _asciiFontTable(data, table):
+        """Glyph table of an ASCII style font: list of (code, advance, glyph data length)."""
+        glyphs = []
+        try:
+            p = table
+            while p + 10 <= len(data):
+                code, adv = struct.unpack_from("<HB", data, p)
+                if glyphs and code != glyphs[-1]["code"] + 1:
+                    break
+                if not glyphs and not 0 <= code < 0x100:
+                    break
+                off = data[p + 5] | (data[p + 6] << 8) | (data[p + 7] << 16)
+                ln = struct.unpack_from("<H", data, p + 8)[0]
+                glyphs.append({"code": code, "char": chr(code), "advance": adv, "length": ln, "_off": off})
+                p += 10
+            if glyphs:
+                shift = p - glyphs[0]["_off"]
+                for g in glyphs:
+                    g["data_offset"] = g.pop("_off") + shift     # relative to the font data
+        except Exception:
+            pass
+        return {"first_code": glyphs[0]["code"] if glyphs else None, "glyph_count": len(glyphs), "glyphs": glyphs}
+
     def getRawBootloader(self):
         start = self._getVal("ressources_files_address")
         end = start + self._getVal("ressource_files_size")
@@ -1098,6 +1161,7 @@ class TFTFile:
              preinit/NNN.json          code blocks that run before the first event of a page
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
              pictures/NNN.png          decoded pictures, pictures/index.json lists them
+             fonts/index.json          font headers (name, height, encoding, data location, ASCII glyph tables)
              raw/                      resources.bin and usercode.bin (only with raw=True)
         Returns a dict with counts."""
         outdir = Path(outdir)
@@ -1143,6 +1207,10 @@ class TFTFile:
             ok, bad = self.exportPictures(outdir / "pictures")
             dump("pictures/index.json", pics)
             counts["pictures"], counts["pictures_failed"] = ok, bad
+        fonts = self.getFonts()
+        if fonts:
+            dump("fonts/index.json", fonts)
+            counts["fonts"] = len(fonts)
         if raw:
             (outdir / "raw").mkdir(parents=True, exist_ok=True)
             res_start = self._getVal("ressources_files_address")

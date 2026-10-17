@@ -72,6 +72,9 @@ The HMI source file (and its license) can be found in this repository: https://g
   (74 slots per object record) form one global id space; the mapping is described above `getObjectTexts()`. Text
   that is only part of a component's initial memory image, and non-text attributes, are not decoded.
 
+* Fonts: the font records and the glyph tables are parsed (`getFonts()`, see the format comment there). The glyph
+  bitmaps are a compressed bitstream that is **not decoded**, so no glyph images are exported.
+
 Known limitations: series 4 uses the series 3 instruction set (not verified); Nextion example files still fall back
 to a flat block list instead of per-page output.
 
@@ -91,5 +94,6 @@ out/
   preinit/NNN.json     code that runs before the first event of a page
   blocks/NNNN.json     only when pages can't be split (older/Nextion files): flat code block list, 500 per file
   pictures/            NNN.png and index.json
+  fonts/index.json     font headers: name, height, encoding, data location; glyph table of ASCII-style fonts
   raw/                 resources.bin, usercode.bin (with --raw)
 ```

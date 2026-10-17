@@ -1170,8 +1170,12 @@ class TFTFile:
 
     @staticmethod
     def glyphRunLengths(glyph):
-        """Pixel count of every token of a compressed glyph (data starts with a type byte 3 or 1). The pixel levels are
-        NOT decoded; the counts sum to advance * line height for ~87% of the glyphs (checked on NotoSans .zi fonts)."""
+        """Pixel count of every token of a compressed glyph (data starts with a type byte 3 or 1; row-major, advance
+        pixels per row, line height rows). Token classes found by fitting NotoSans .zi fonts against a TTF render:
+          00-1f  run of t blank pixels (1f = 31)          20-3f  run of (t & 1f) pixels at full level
+          c0-ff  two literal pixels, 3-bit levels (t>>3&7, t&7), level l is about 255*sqrt(l/7)
+          40-7f  (t & 1f)+1 pixels, 80-bf  (t>>3&7)+1 pixels: blank / copy-from-row-above style runs, meaning not decoded
+        The counts sum to advance * line height for ~87% of the glyphs."""
         def run(t):
             if t < 0x20:
                 return t

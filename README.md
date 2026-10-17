@@ -127,6 +127,6 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 * Nextion T0/K0 files are only tested with the two sample files.
 
 ### Glyph bitmaps (partial)
-Glyph streams are tokenised with a per-token pixel count (`TFTFile.glyphRunLengths`; sums to advance x line height for
-~1600 of 1830 glyphs of the NotoSans 24 `.zi`), but the pixel level coding of the tokens is still unknown, so no glyph
-bitmaps are exported.
+Glyph streams are row-major token streams (`TFTFile.glyphRunLengths` documents the token classes found). Blank runs
+(`00-1f`), full-ink runs (`20-3f`) and two-pixel literals with 3-bit levels (`c0-ff`) are understood; the `40-bf` tokens
+(pixel runs that mostly repeat the row above) are not, so no glyph bitmaps are exported yet.

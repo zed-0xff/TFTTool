@@ -52,7 +52,32 @@ class Usercode:
             self.decoded = ""
             self._decode(hexVals)
 
+        _compareOps = {1: "==", 2: "<", 3: ">", 4: "<=", 5: ">=", 6: "!="}
+
         def _decode(self, hexVals=True):
+            self._decode_raw(hexVals)
+            self._beautify()
+
+        def _beautify(self):
+            """The operator `i` is a conditional: `i <a>,<b>,<comparison>,<jump>`. Comparison codes (verified against
+            nextion2text output): 1 ==, 2 <, 3 >, 4 <=, 5 >=, 6 !=; the jump (bytes) skips the body when the
+            condition is false."""
+            if not isinstance(self.decoded, str):
+                return
+            m = re.fullmatch(r"i (.*),(\d),(0x[0-9a-f]+|\d+)", self.decoded, flags=re.S)
+            if m and int(m.group(2)) in self._compareOps:
+                args = m.group(1)
+                quoted, cut = False, -1
+                for i, ch in enumerate(args):          # last comma that is not inside a string literal
+                    if ch == '"':
+                        quoted = not quoted
+                    elif ch == "," and not quoted:
+                        cut = i
+                if cut >= 0:
+                    a, b = args[:cut], args[cut + 1:]
+                    self.decoded = f"if {a}{self._compareOps[int(m.group(2))]}{b} else jump {m.group(3)}"
+
+        def _decode_raw(self, hexVals=True):
             if not self.raw:
                 self.decoded = "EMPTY_BLOCK"
                 return
@@ -141,7 +166,7 @@ class Usercode:
                                 op_num, op_size = struct.unpack_from(dataStruct, self.raw, localI)
                                 if op_size in self.instruction_set["numerated_operators"]:
                                     op_list = self.instruction_set["numerated_operators"][op_size]
-                                    if op_num < len(op_list):
+                                    if op_num < len(op_list) and op_list[op_num]:
                                         self.decoded += op_list[op_num]
                                         decoded = True
                                 if not decoded:
@@ -582,6 +607,16 @@ class TFTFile:
         if decode_usercode:
             self.decode_usercode(hexVals=hexVals)
 
+    # Character encodings of the header 2 field "unknown_encode" (table found by CalDymos' fork).
+    _charEncodings = ["null", "ascii", "gb2312", "iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5",
+                      "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-9", "iso-8859-13", "iso-8859-15",
+                      "iso-8859-11", "ks_c_5601-1987", "big5", "windows-1255", "windows-1256", "windows-1257",
+                      "windows-1258", "windows-874", "koi8-r", "shift-jis", "utf-8"]
+
+    def getCharEncoding(self):
+        code = self.header2.content.get("unknown_encode", -1)
+        return self._charEncodings[code] if 0 <= code < len(self._charEncodings) else f"unknown ({code})"
+
     # ---- Header 2 detection -------------------------------------------------------------------------------------
 
     # Keys that were recovered from files whose model name is unknown (CRC of the name -> (label, key)).
@@ -655,9 +690,152 @@ class TFTFile:
         score, total, h2, lname, kname, key = best
         self.header2_note = f"layout={lname}, {kname}=0x{key:08x}, validation {score}/{total}"
         if score < total:
+            fresh = HeaderData(self.raw, self._header2Layouts()[0][1], 0)
+            for k in fresh.content:
+                fresh.content[k] = 0
+            if self._derive_header2(fresh):
+                self.header2_note = "header 2 derived from the file structure (it can't be decoded)"
+                return fresh
             print(f"Warning: header 2 could not be fully validated ({self.header2_note}). Values may be wrong; "
                   f"consider passing --header2.")
         return h2
+
+    # ---- Header 2 derived from the file structure ----------------------------------------------------------------
+
+    _objRecordSizes = (232, 204, 194)
+
+    def _scanTables(self):
+        """Finds the page and object tables from the end of the file (the object records are the last section before
+        the file checksum, the page table is right in front of them). Returns a dict or None."""
+        raw, n = self.raw, len(self.raw)
+        floor = self.header1.content["ressources_files_address"] + self.header1.content["ressource_files_size"]
+        sizes = list(self._objRecordSizes) + [r for r in range(150, 300) if r not in self._objRecordSizes]
+        for rec in sizes:
+            for pad in range(0, 9):
+                for N in range(1, 6000):
+                    o = n - 4 - pad - N * rec
+                    if o < floor:
+                        break
+                    if raw[o] != 0x79 or raw[o + 1] != 0 or raw[o + 2] != 0:      # first record: the page object, id 0
+                        continue
+                    for prs in (16, 12):
+                        for P in range(1, 400):
+                            pa = o - prs * P
+                            if pa < floor:
+                                break
+                            first = struct.unpack_from("<HH", raw, pa)
+                            if first[0] != 0:
+                                continue
+                            recs = [struct.unpack_from("<HH", raw, pa + prs * i) for i in range(P)]
+                            if all(recs[i][0] + recs[i][1] == recs[i + 1][0] for i in range(P - 1)) \
+                                    and recs[-1][0] + recs[-1][1] == N:
+                                return {"pages_addr": pa, "objects_addr": o, "pages": P, "objects": N,
+                                        "page_record": prs, "object_record": rec, "pad": pad}
+        return None
+
+    # Names of the slots of the resource table (header "ressources_files_count" slots of <offset> <size> <0>).
+    _resourceSlotNames = {0: "bootloader0", 1: "bootloader1", 7: "pictures", 8: "fonts", 9: "gmovs", 10: "videos",
+                          11: "audios"}
+
+    def _resourceTable(self):
+        """The resource files listed at the start of the resource region: <offset:u32> <size:u32> <0:u32> per slot
+        (offsets are relative to the region). Returns [(absolute offset, size, slot index)] for the used slots."""
+        base = self.header1.content["ressources_files_address"]
+        count = min(max(self.header1.content["ressources_files_count"], 0), 64)
+        out = []
+        for i in range(count):
+            off, size, _ = struct.unpack_from("<III", self.raw, base + 12 * i)
+            if size:
+                out.append((base + off, size, i))
+        return out
+
+    def getResources(self):
+        """The resource files with their kind. Slots 2..6 are only used by some editor versions (F series)."""
+        res = []
+        for start, size, slot in self._resourceTable():
+            kind = self._resourceSlotNames.get(slot, f"resource{slot}")
+            if slot == 7 and self._probePictureTable(start, size) == 0:
+                kind += " (unrecognised layout)"
+            res.append({"slot": slot, "kind": kind, "offset": start, "size": size})
+        return res
+
+    def _probePictureTable(self, start, size):
+        """Number of pictures if start holds a picture table (24-byte records followed by the picture data)."""
+        try:
+            first = struct.unpack_from("<I", self.raw, start + 8)[0]
+            if first == 0 or first % 24 or struct.unpack_from("<I", self.raw, start + 4)[0] != 0:
+                return 0
+            count = first // 24
+            end = 0
+            for i in range(count):
+                pid, off, w, h, sz = struct.unpack_from("<IIHHI", self.raw, start + 24 * i + 4)
+                if pid != i or off < end:
+                    return 0
+                end = off + sz
+            return count if end == size else 0
+        except struct.error:
+            return 0
+
+    def _probeFontTable(self, start, size):
+        """Number of fonts if start holds font records (44 bytes each, followed by the font data)."""
+        try:
+            if self.raw[start:start + 2] != b"\x04\xff":
+                return 0
+            first = struct.unpack_from("<I", self.raw, start + 24)[0]
+            if first == 0 or first % 44 or first >= 44 * 4096:
+                return 0
+            count = first // 44
+            end = first
+            for i in range(count):
+                sz, off = struct.unpack_from("<II", self.raw, start + 44 * i + 20)
+                if off != end:
+                    return 0
+                end = off + sz
+            return count if end == size else 0
+        except struct.error:
+            return 0
+
+    def _derive_header2(self, h2):
+        """Fills the header 2 fields that can be found from the structure of the file. Used when header 2 can't be
+        decoded (encrypted differently, e.g. Nextion F series). Returns True on success."""
+        h1 = self.header1.content
+        c = h2.content
+        base, rsize = h1["ressources_files_address"], h1["ressource_files_size"]
+        tables = self._scanTables()
+        if not tables:
+            return False
+        c["ressources_files_address"] = base
+        c["usercode_address"] = base + rsize
+        c["unknown_pages_address"] = tables["pages_addr"]
+        c["unknown_objects_address"] = tables["objects_addr"]
+        c["pages_count"] = tables["pages"]
+        c["unknown_objects_count"] = tables["objects"]
+        # static usercode size: end of the block chain that starts the usercode
+        uc = base + rsize
+        p = uc
+        while p + 4 <= tables["pages_addr"]:
+            ln = struct.unpack_from("<I", self.raw, p)[0]
+            if ln > 0x100000 or p + 4 + ln > tables["pages_addr"]:
+                break
+            p += 4 + ln
+        c["static_usercode_address"] = p - uc
+        c["app_vas_address"] = p - uc
+        for start, size, slot in self._resourceTable():
+            n = self._probePictureTable(start, size)
+            if n:
+                c["pictures_address"], c["pictures_count"] = start, n
+                continue
+            n = self._probeFontTable(start, size)
+            if n:
+                c["fonts_address"], c["fonts_count"] = start, n
+                continue
+            if slot == 9:
+                c["gmovs_address"] = start
+            elif slot == 10:
+                c["videos_address"] = start
+            elif slot == 11:
+                c["audios_address"] = start
+        return True
 
     # ---- Instruction set selection ------------------------------------------------------------------------------
 
@@ -673,7 +851,7 @@ class TFTFile:
         vendor = version_str.split("-")[0]
         series = self._getVal("model_series")
         want = self._versionTuple(version_str)
-        cands = []  # (priority, distance, entry, version)
+        cands = []  # (version priority, series missing, distance, -set priority, entry, version)
         for e in all_instruction_sets:
             for v in e["versions"]:
                 vv = self._versionTuple(v)
@@ -684,10 +862,10 @@ class TFTFile:
                 else:
                     prio = 2
                 dist = (abs(vv[0] - want[0]), abs(vv[1] - want[1]) if len(vv) > 1 else 0)
-                cands.append((prio, dist, id(e), e, v))
-        cands.sort(key=lambda x: x[:3])
+                cands.append((prio, 0 if series in e["models"] else 1, dist, -e.get("priority", 0), id(e), e, v))
+        cands.sort(key=lambda x: x[:5])
         series_pref = [series, 3, 100, 0, 1, 2]
-        for prio, dist, _, e, v in cands:
+        for prio, _, dist, _, _, e, v in cands:
             for sr in series_pref:
                 if sr in e["models"]:
                     notes = []
@@ -748,15 +926,29 @@ class TFTFile:
             recs.append({"id": pid, "offset": start + off, "w": w, "h": h, "size": size, "flags": hdr.hex()})
         return recs
 
+    def _pictureDims(self, rec):
+        """Width and height of a raw picture: the picture table holds them in the unrotated frame, so they are swapped
+        for portrait projects (ui_orientation 1 and 3)."""
+        if self._getVal("ui_orientation") in (1, 3):
+            return rec["h"], rec["w"]
+        return rec["w"], rec["h"]
+
     @staticmethod
     def _rgb565(v):
         return bytes((((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31))
 
     @classmethod
-    def decodePicture(cls, data:bytes):
+    def decodePicture(cls, data:bytes, w=None, h=None):
         """Returns a dict with w, h, rgb (w*h*3 bytes), alpha (w*h bytes 0..255 or None) and segments,
-        or None if the picture can't be decoded."""
+        or None if the picture can't be decoded. w and h (from the picture table) are only needed for raw pictures."""
         try:
+            if w and h and len(data) == w * h * 2:
+                # Nextion K0/T0 files: uncompressed RGB565 (little endian), no header
+                px = struct.unpack(f"<{w * h}H", data)
+                rgb = bytearray(w * h * 3)
+                for i, v in enumerate(px):
+                    rgb[3 * i:3 * i + 3] = cls._rgb565(v)
+                return {"w": w, "h": h, "rgb": bytes(rgb), "alpha": None, "segments": 0, "raw": True}
             fmt, w, h, magic, len1 = struct.unpack_from("<IIIII", data, 0)
             if fmt != 2 or w * h == 0:
                 return None
@@ -853,7 +1045,7 @@ class TFTFile:
         directory.mkdir(parents=True, exist_ok=True)
         ok = bad = 0
         for r in self.getPictureRecords():
-            pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]])
+            pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]], *self._pictureDims(r))
             if not pic:
                 bad += 1
                 continue
@@ -874,11 +1066,22 @@ class TFTFile:
     # <data length:u16> <index:u8> <block:u8>, in many blocks of 256 entries with empty placeholders (advance 6, length 0).
     # The glyph data itself is a bit-oriented compressed stream (zero padded to bytes) that is NOT decoded.
 
+    def _fontCount(self):
+        """Number of font records. The fonts_count field of header 2 is not reliable (e.g. Nextion K0 1.64 files), but
+        the data of the first font starts right after the records, so its offset gives the count."""
+        start = self._getVal("fonts_address")
+        first_off = struct.unpack_from("<I", self.raw, start + 24)[0]
+        if 0 < first_off < 44 * 4096 and first_off % 44 == 0:
+            return first_off // 44
+        return self._getVal("fonts_count")
+
     def getFonts(self):
         start = self._getVal("fonts_address")
-        count = self._getVal("fonts_count")
         fonts = []
-        if start == 0 or count == 0 or start + 44 * count > len(self.raw):
+        if start == 0 or start + 44 > len(self.raw):
+            return fonts
+        count = self._fontCount()
+        if count == 0 or start + 44 * count > len(self.raw):
             return fonts
         for i in range(count):
             r = self.raw[start + 44 * i:start + 44 * i + 44]
@@ -987,10 +1190,11 @@ class TFTFile:
             "editor": self.getEditorVersionStr(),
             "resolution": [self._getVal("lcd_resolution_x"), self._getVal("lcd_resolution_y")],
             "orientation": self._getVal("ui_orientation"),
+            "char_encoding": self.getCharEncoding(),
             "pages_count": self._getVal("pages_count"),
             "objects_count": self._getVal("unknown_objects_count"),
             "pictures_count": self._getVal("pictures_count"),
-            "fonts_count": self._getVal("fonts_count"),
+            "fonts_count": self._fontCount(),
             "usercode_address": f"0x{uc_addr:x}",
             "usercode_size": uc_size,
         }
@@ -1000,7 +1204,7 @@ class TFTFile:
 
         pics = []
         for r in self.getPictureRecords():
-            pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]])
+            pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]], *self._pictureDims(r))
             pics.append({"id": r["id"], "w": r["w"], "h": r["h"], "size": r["size"],
                          "decoded": bool(pic),
                          "segments": pic["segments"] if pic else None,
@@ -1029,125 +1233,9 @@ class TFTFile:
         page_objects = self._parse_objects()
         texts = self.getObjectTexts(page_objects) if page_objects else {}
 
-        # Build block lookup: usercode offset → block object
-        block_map = {addr: blk for addr, blk in blocks}
-
-        # Find dict block indices for page boundaries
-        dict_indices = [i for i, (_, blk) in enumerate(blocks)
-                        if isinstance(blk.decoded, dict)]
-        pages_count = self._getVal("pages_count")
-
-        pages = []
-        if page_objects and dict_indices and len(dict_indices) == pages_count:
-            prev_start = 1  # after block 0
-            for page_num, dict_idx in enumerate(dict_indices):
-                # Collect all block offsets for this page (between prev page end and dict block)
-                page_block_offsets = [blocks[i][0] for i in range(prev_start, dict_idx)]
-
-                # Build event pointer → (obj_index, slot, event_name) mapping
-                # and sorted list of event boundaries
-                obj_list = page_objects[page_num]
-                event_starts = {}  # offset → (obj_index, event_name)
-                for obj_i, obj in enumerate(obj_list):
-                    ptrs = obj.get("_event_ptrs", ())
-                    for slot, ptr in enumerate(ptrs):
-                        if ptr != 0xFFFFFFFF:
-                            ename = self._event_name(obj["type"], slot)
-                            event_starts[ptr] = (obj_i, ename)
-
-                sorted_events = sorted(event_starts.keys())
-
-                # Assign each block to an event based on offset ranges
-                # Blocks between event_starts[i] and event_starts[i+1] belong to event i
-                # Blocks before the first event are "preinitialize"
-                obj_events = {}  # obj_index → {event_name: [blocks]}
-                preinit_blocks = []
-
-                for blk_off in page_block_offsets:
-                    blk = block_map.get(blk_off)
-                    if not blk:
-                        continue
-                    text = self._block_text(blk)
-                    if not text:
-                        continue
-                    block_entry = {
-                        "offset": f"0x{blk_off:x}",
-                        "size": len(blk.raw),
-                        "content": text,
-                    }
-
-                    # Find which event this block belongs to
-                    # (last event start <= blk_off)
-                    owner = None
-                    for i in range(len(sorted_events) - 1, -1, -1):
-                        if blk_off >= sorted_events[i]:
-                            owner = event_starts[sorted_events[i]]
-                            break
-
-                    if owner is None:
-                        preinit_blocks.append(block_entry)
-                    else:
-                        obj_i, ename = owner
-                        if obj_i not in obj_events:
-                            obj_events[obj_i] = {}
-                        if ename not in obj_events[obj_i]:
-                            obj_events[obj_i][ename] = []
-                        obj_events[obj_i][ename].append(block_entry)
-
-                # Build clean object list (strip internal _event_ptrs, add events)
-                clean_objects = []
-                for obj_i, obj in enumerate(obj_list):
-                    clean_obj = {
-                        "id": obj["id"], "type": obj["type"],
-                        "x": obj["x"], "y": obj["y"],
-                        "w": obj["w"], "h": obj["h"],
-                    }
-                    if (page_num, obj_i) in texts:
-                        clean_obj["text"] = {str(k): v for k, v in sorted(texts[(page_num, obj_i)].items())}
-                    if obj_i in obj_events:
-                        clean_obj["events"] = obj_events[obj_i]
-                        # Touch events that report to the host look like "prints 0x65,1 / prints dp,1 / prints N,1 /
-                        # prints 0xff,1 x3", i.e. the 0x65 frame: 65 <page> <widget> <press/release> FF FF FF.
-                        for ename, blks in obj_events[obj_i].items():
-                            joined = "\n".join(blk["content"] for blk in blks)
-                            m = re.search(r"prints 0x65,1\s+prints (\w+),1\s+prints (\w+),1", joined)
-                            if m:
-                                wid = m.group(2)
-                                clean_obj.setdefault("host_events", {})[ename] = {
-                                    "page": "<page>" if m.group(1) == "dp" else m.group(1),
-                                    "widget": int(wid, 0) if re.fullmatch(r"(0x[0-9a-fA-F]+|\d+)", wid) else wid,
-                                }
-                    clean_objects.append(clean_obj)
-
-                _, dict_blk = blocks[dict_idx]
-                variables = dict_blk.decoded if isinstance(dict_blk.decoded, dict) else {}
-                variables = {str(k): v for k, v in variables.items()}
-
-                page_entry = {"page": page_num}
-                if preinit_blocks:
-                    page_entry["preinitialize"] = preinit_blocks
-                page_entry["objects"] = clean_objects
-                page_entry["variables"] = variables
-                pages.append(page_entry)
-                prev_start = dict_idx + 1
-        else:
-            # Fallback: no object metadata, flat block list
-            for i, (addr, blk) in enumerate(blocks[1:], 1):
-                text = self._block_text(blk)
-                if not text:
-                    continue
-                entry = {
-                    "page": None,
-                    "blocks": [{
-                        "offset": f"0x{addr:x}",
-                        "size": len(blk.raw),
-                        "content": text,
-                    }],
-                }
-                if isinstance(blk.decoded, dict):
-                    entry["variables"] = {str(k): v for k, v in blk.decoded.items()}
-                pages.append(entry)
-
+        pages, prolog = self._buildPages(blocks, page_objects, texts)
+        if prolog:
+            d["global_blocks"] = prolog
         d["pages"] = pages
         return d
 
@@ -1157,26 +1245,41 @@ class TFTFile:
              headers/                  header1.json, header2.json
              definitions/              definitions.json (strings of the first usercode block)
              pages/NNN.json            page components with events, host events and text
-             variables/NNN.json        decoded variable blocks of a page
-             preinit/NNN.json          code blocks that run before the first event of a page
+             names/NNN.json            component id -> CRC hash of its name (per page)
+             init/NNN.json             init code blocks of a page (component info, language texts, ...)
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
              pictures/NNN.png          decoded pictures, pictures/index.json lists them
              fonts/index.json          font headers (name, height, encoding, data location, ASCII glyph tables)
              raw/                      resources.bin and usercode.bin (only with raw=True)
         Returns a dict with counts."""
         outdir = Path(outdir)
-        data = self.getReadableData(includeUnknowns)
+        errors = []
+
+        def guard(what, fn, default=None):
+            """Runs one part of the dump; a failure is recorded in info.json instead of aborting everything."""
+            try:
+                return fn()
+            except Exception as e:                      # pragma: no cover (depends on the input file)
+                errors.append(f"{what}: {type(e).__name__}: {e}")
+                return default
 
         def dump(path, obj):
             path = outdir / path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
 
+        data = guard("decode", lambda: self.getReadableData(includeUnknowns))
+        if data is None:     # still write what is known without the usercode
+            data = {"info": {"model": self.model, "editor": self.getEditorVersionStr()},
+                    "header1": dict(self.header1.content), "header2": dict(self.header2.content),
+                    "pages": [], "pictures": []}
         info = dict(data["info"])
         pics = data.get("pictures", [])
         dump("headers/header1.json", data["header1"])
         dump("headers/header2.json", data["header2"])
         dump("definitions/definitions.json", data.get("definitions", {}))
+        if data.get("global_blocks"):
+            dump("definitions/global_blocks.json", data["global_blocks"])
         counts = {"pages": 0, "blocks_files": 0, "pictures": 0}
         index = []
         flat = []
@@ -1188,10 +1291,10 @@ class TFTFile:
             name = f"{n:03d}.json"
             objs = pg.get("objects", [])
             dump("pages/" + name, {"page": n, "objects": objs})
-            if pg.get("variables"):
-                dump("variables/" + name, pg["variables"])
-            if pg.get("preinitialize"):
-                dump("preinit/" + name, pg["preinitialize"])
+            if pg.get("name_hashes"):
+                dump("names/" + name, pg["name_hashes"])
+            if pg.get("init"):
+                dump("init/" + name, pg["init"])
             index.append({"page": n, "objects": len(objs),
                           "host_widgets": sorted({he["widget"] for o in objs for he in o.get("host_events", {}).values()
                                                   if isinstance(he["widget"], int)})})
@@ -1200,22 +1303,37 @@ class TFTFile:
             dump(f"blocks/{k // 500:04d}.json", flat[k:k + 500])
             counts["blocks_files"] += 1
         info["pages"] = index
+        info["resources"] = guard("resources", self.getResources, [])
+        checks = guard("checksums", self.verifyChecksums, {})
+        info["checksums"] = {k: {"stored": f"0x{a:08x}", "computed": f"0x{b:08x}", "ok": ok}
+                             for k, (a, b, ok) in checks.items()}
+        info["header2_note"] = self.header2_note
         info["files"] = {"headers": ["header1.json", "header2.json"], "pages": counts["pages"],
                          "flat_block_files": counts["blocks_files"], "pictures": len(pics)}
-        dump("info.json", info)
         if pictures:
-            ok, bad = self.exportPictures(outdir / "pictures")
+            res = guard("pictures", lambda: self.exportPictures(outdir / "pictures"), (0, 0))
+            ok, bad = res
             dump("pictures/index.json", pics)
             counts["pictures"], counts["pictures_failed"] = ok, bad
-        fonts = self.getFonts()
+        fonts = guard("fonts", self.getFonts, [])
         if fonts:
             dump("fonts/index.json", fonts)
             counts["fonts"] = len(fonts)
         if raw:
-            (outdir / "raw").mkdir(parents=True, exist_ok=True)
-            res_start = self._getVal("ressources_files_address")
-            (outdir / "raw" / "resources.bin").write_bytes(self.raw[res_start:res_start + self._getVal("ressource_files_size")])
-            (outdir / "raw" / "usercode.bin").write_bytes(self.getRawUsercode())
+            def write_raw():
+                (outdir / "raw").mkdir(parents=True, exist_ok=True)
+                res_start = self._getVal("ressources_files_address")
+                (outdir / "raw" / "resources.bin").write_bytes(
+                    self.raw[res_start:res_start + self._getVal("ressource_files_size")])
+                (outdir / "raw" / "usercode.bin").write_bytes(self.getRawUsercode())
+                for r in self.getResources():
+                    name = f"res{r['slot']:02d}_{r['kind'].split(' ')[0]}.bin"
+                    (outdir / "raw" / name).write_bytes(self.raw[r["offset"]:r["offset"] + r["size"]])
+            guard("raw export", write_raw)
+        if errors:
+            info["errors"] = errors
+            counts["errors"] = len(errors)
+        dump("info.json", info)
         return counts
 
     @staticmethod
@@ -1306,8 +1424,9 @@ class TFTFile:
                 w, h = struct.unpack_from("<HH", self.raw, off + 44)
                 type_name = self._nextion_type_names.get(type_code, f"unknown_0x{type_code:02x}")
                 slots = None
-                if rec_size >= 56 + 2 * self._attrSlots:
-                    slots = struct.unpack_from(f"<{self._attrSlots}H", self.raw, off + 56)
+                nslots = (rec_size - 56) // 2
+                if nslots > 0:
+                    slots = struct.unpack_from(f"<{nslots}H", self.raw, off + 56)
                 objects.append({
                     "id": obj_id, "type": type_name, "_type_code": type_code,
                     "x": x, "y": y, "w": w, "h": h,
@@ -1328,8 +1447,6 @@ class TFTFile:
     #   <cjmp ",N,1,"> <local pointer = global id = "text" attribute of an object> = "<utf-8 text>" <jmp>
     # with N the language index. The pointer may belong to an object of another page. Slot 53 of text, button,
     # scrolling-text and dual-state objects is the text attribute.
-    _attrSlots = 74
-    _txtSlot = 53
     _txtTypes = (0x74, 0x62, 0x37, 0x35)
 
     def _pageBlocks(self, page, pages):
@@ -1347,13 +1464,12 @@ class TFTFile:
     def getObjectTexts(self, page_objects=None):
         """Returns {(page, object index): {language index: text}} for the text assigned by page code."""
         page_objects = page_objects or self._parse_objects()
-        if not page_objects or any(o["_slots"] is None for pg in page_objects for o in pg):
+        if not page_objects or len(page_objects) < 3 or any(o["_slots"] is None for pg in page_objects for o in pg):
             return {}
-        pa = self._getVal("unknown_pages_address")
-        prs = self.page_record_size
-        if prs < 8:
+        table = self._pageTable()
+        if not table or table[0]["code"] == 0:
             return {}
-        pages = [{"code": struct.unpack_from("<I", self.raw, pa + prs * i + 4)[0]} for i in range(len(page_objects))]
+        pages = [{"code": rec["code"]} for rec in table]
         # assignments per page: list of (pointer, language, text)
         assigns = []
         for pi in range(len(pages)):
@@ -1367,6 +1483,9 @@ class TFTFile:
                 if m:
                     lst.append((struct.unpack("<I", m.group(1))[0], lang, m.group(2).decode("utf-8", "replace")))
             assigns.append(lst)
+        if not any(assigns):
+            return {}
+        ptr_sets = [{a[0] for a in lst} for lst in assigns]
 
         def lo(o):
             v = [x for x in o["_slots"] if x != 0xffff]
@@ -1380,58 +1499,192 @@ class TFTFile:
                     votes.setdefault(a["_type_code"], collections.Counter())[lo(b) - lo(a)] += 1
         span = {t: c.most_common(1)[0][0] for t, c in votes.items()}
 
-        def txt_ids(pi):
-            return {o["_slots"][self._txtSlot]: j for j, o in enumerate(page_objects[pi])
-                    if o["_type_code"] in self._txtTypes and o["_slots"][self._txtSlot] != 0xffff}
-
-        ptr_sets = [{a[0] for a in lst} for lst in assigns]
-
-        def fits(pi, base):
-            ids = txt_ids(pi)
-            return all((p - base) in ids for p in ptr_sets[pi])
-
-        def chain(first_base):
-            base = {1: first_base}
-            for pi in range(1, len(page_objects) - 1):
-                last = page_objects[pi][-1]
-                m0 = lo(last)
-                if m0 is None:
-                    m0 = max(x for o in page_objects[pi] for x in o["_slots"] if x != 0xffff) - span.get(last["_type_code"], 30)
-                pred = base[pi] + m0 + span.get(last["_type_code"], 30)
-                if not ptr_sets[pi + 1]:
-                    base[pi + 1] = pred
-                    continue
-                cands = [pred + d for d in (0, 1, 2, -1, 3) if fits(pi + 1, pred + d)]
-                if not cands:
-                    cands = sorted((b for b in range(pred - 80, pred + 81) if fits(pi + 1, b)), key=lambda b: abs(b - pred))
-                base[pi + 1] = cands[0] if cands else pred
-            return base
-
-        def mapped(base):
-            glob = {}
-            for pi in range(1, len(page_objects)):
-                for sl, j in txt_ids(pi).items():
-                    glob[base[pi] + sl] = (pi, j)
-            return glob
-
-        if len(page_objects) < 3:
+        nslots = len(page_objects[0][0]["_slots"])
+        # candidate text slots: present in every text object
+        text_objs = [o for pg in page_objects for o in pg if o["_type_code"] == 0x74]
+        if not text_objs:
             return {}
+        cands = [sl for sl in range(nslots) if all(o["_slots"][sl] != 0xffff for o in text_objs)]
+        # Every attribute id of an object is its first id plus a fixed per-type offset, so all candidates give the same
+        # mapping as long as the offset is the same for text and buttons; a few of them are enough.
+        if len(cands) > 6:
+            cands = [cands[i * (len(cands) - 1) // 5] for i in range(6)]
+
+        first_pg = next(pi for pi in range(len(page_objects)) if ptr_sets[pi])
         best = None
-        for c in range(0, 200):
-            base = chain(c)
-            glob = mapped(base)
-            score = sum(1 for lst in assigns for a in lst if a[0] in glob)
-            if best is None or score > best[0]:
-                best = (score, base, glob)
-        score, base, glob = best
+        for slot in cands:
+            ids = []
+            for pg in page_objects:
+                ids.append({o["_slots"][slot]: j for j, o in enumerate(pg)
+                            if o["_type_code"] in self._txtTypes and o["_slots"][slot] != 0xffff})
+
+            def fits(pi, base):
+                return all((p - base) in ids[pi] for p in ptr_sets[pi])
+
+            def chain(first_base):
+                """Page bases from the first page with assignments on: base of the next page = this base + the id range
+                of this page (from the last object), adjusted a little so that the page's own assignments fit."""
+                base = {first_pg: first_base}
+                for pi in range(first_pg, len(page_objects) - 1):
+                    last = page_objects[pi][-1]
+                    m0 = lo(last)
+                    if m0 is None:
+                        m0 = max(x for o in page_objects[pi] for x in o["_slots"] if x != 0xffff) - span.get(last["_type_code"], 30)
+                    pred = base[pi] + m0 + span.get(last["_type_code"], 30)
+                    if not ptr_sets[pi + 1]:
+                        base[pi + 1] = pred
+                        continue
+                    found = [pred + d for d in (0, 1, 2, -1, 3) if fits(pi + 1, pred + d)]
+                    if not found:
+                        found = sorted((b for b in range(pred - 80, pred + 81) if fits(pi + 1, b)), key=lambda b: abs(b - pred))
+                    base[pi + 1] = found[0] if found else pred
+                return base
+
+            anchors = sorted({ptr - i for ptr in ptr_sets[first_pg] for i in ids[first_pg]})
+            anchors = [a for a in anchors if fits(first_pg, a)]
+            for c in anchors:
+                base = chain(c)
+                glob = {}
+                for pi in range(first_pg, len(page_objects)):
+                    for sl, j in ids[pi].items():
+                        glob[base[pi] + sl] = (pi, j)
+                score = sum(1 for lst in assigns for a in lst if a[0] in glob)
+                if best is None or score > best[0]:
+                    best = (score, slot, glob)
+        if best is None:
+            return {}
+        score, slot, glob = best
+        total = sum(len(l) for l in assigns)
+        if score < 0.8 * total:       # not a convincing mapping
+            return {}
         out = {}
-        for pi, lst in enumerate(assigns):
+        for lst in assigns:
             for ptr, lang, text in lst:
                 tgt = glob.get(ptr)
                 if tgt:
                     out.setdefault(tgt, {})[lang if lang is not None else -1] = text
-        self.textMappedRatio = (score, sum(len(l) for l in assigns))
+        self.textMappedRatio = (score, total)
+        self.textSlot = slot
         return out
+
+    def _pageTable(self):
+        """Page records: list of dicts first (index of the first object), count, code (usercode offset of the page
+        code), attr (usercode offset of the page's attribute memory) and size (16-byte records only)."""
+        pa = self._getVal("unknown_pages_address")
+        oa = self._getVal("unknown_objects_address")
+        n = self._getVal("pages_count")
+        if not pa or not oa or not n or (oa - pa) % n:
+            return None
+        rs = (oa - pa) // n
+        if rs < 12:
+            return None
+        recs = []
+        for i in range(n):
+            first, cnt, code, attr = struct.unpack_from("<HHII", self.raw, pa + rs * i)
+            size = struct.unpack_from("<I", self.raw, pa + rs * i + 12)[0] if rs >= 16 else None
+            recs.append({"first": first, "count": cnt, "code": code, "attr": attr, "size": size})
+        return recs
+
+    def _buildPages(self, blocks, page_objects, texts):
+        """Assigns the usercode blocks to pages and the events to components.
+
+        Layout of the usercode blocks (found by comparing with the component records):
+          <global blocks> then per page <event code of the page's components> <name hash table> <init code of the page>
+        The page record's "code" address is the name hash table: 6-byte entries <hash:u32> <component id:u16>, sorted by
+        hash (the hash is a CRC of the component name). The event code of a page starts at the lowest event pointer of
+        its components. Returns (pages, global blocks)."""
+        table = self._pageTable()
+        pages = []
+        if not page_objects or not table or len(table) != len(page_objects):
+            # Fallback: no object metadata, flat block list
+            for addr, blk in blocks[1:]:
+                text = self._block_text(blk)
+                if not text:
+                    continue
+                entry = {"page": None, "blocks": [{"offset": f"0x{addr:x}", "size": len(blk.raw), "content": text}]}
+                if isinstance(blk.decoded, dict):
+                    entry["name_hashes"] = {str(k): v for k, v in blk.decoded.items()}
+                pages.append(entry)
+            return pages, []
+
+        static_end = self._getVal("static_usercode_address") or (blocks[-1][0] + len(blocks[-1][1].raw) + 4 if blocks else 0)
+        n = len(table)
+        first_event = []
+        for objs, rec in zip(page_objects, table):
+            ptrs = [p for o in objs for p in o.get("_event_ptrs", ()) if p != 0xFFFFFFFF and p < rec["code"]]
+            first_event.append(min(ptrs) if ptrs else rec["code"])
+
+        def entry(addr, blk, text):
+            return {"offset": f"0x{addr:x}", "size": len(blk.raw), "content": text}
+
+        prolog = []
+        for addr, blk in blocks:
+            if addr >= first_event[0]:
+                break
+            text = self._block_text(blk)
+            if text:
+                prolog.append(entry(addr, blk, text))
+
+        for page_num, rec in enumerate(table):
+            obj_list = page_objects[page_num]
+            code = rec["code"]
+            init_end = first_event[page_num + 1] if page_num + 1 < n else static_end
+
+            event_starts = {}   # event pointer -> (object index, event name)
+            for obj_i, obj in enumerate(obj_list):
+                for slot, ptr in enumerate(obj.get("_event_ptrs", ())):
+                    if ptr != 0xFFFFFFFF:
+                        event_starts[ptr] = (obj_i, self._event_name(obj["type"], slot))
+            sorted_events = sorted(event_starts)
+
+            obj_events, init, hashes = {}, [], {}
+            for addr, blk in blocks:
+                if addr < first_event[page_num] or addr >= init_end:
+                    continue
+                if addr == code:
+                    if isinstance(blk.decoded, dict):
+                        hashes = {str(k): v for k, v in blk.decoded.items()}
+                    continue
+                text = self._block_text(blk)
+                if not text:
+                    continue
+                if addr < code:
+                    owner = None
+                    for ev in reversed(sorted_events):
+                        if addr >= ev:
+                            owner = event_starts[ev]
+                            break
+                    if owner is not None:
+                        obj_events.setdefault(owner[0], {}).setdefault(owner[1], []).append(entry(addr, blk, text))
+                        continue
+                init.append(entry(addr, blk, text))
+
+            clean_objects = []
+            for obj_i, obj in enumerate(obj_list):
+                clean_obj = {"id": obj["id"], "type": obj["type"], "x": obj["x"], "y": obj["y"],
+                             "w": obj["w"], "h": obj["h"]}
+                if (page_num, obj_i) in texts:
+                    clean_obj["text"] = {str(k): v for k, v in sorted(texts[(page_num, obj_i)].items())}
+                if obj_i in obj_events:
+                    clean_obj["events"] = obj_events[obj_i]
+                    # Touch events that report to the host look like "prints 0x65,1 / prints dp,1 / prints N,1 /
+                    # prints 0xff,1 x3", i.e. the 0x65 frame: 65 <page> <widget> <press/release> FF FF FF.
+                    for ename, blks in obj_events[obj_i].items():
+                        joined = "\n".join(b["content"] for b in blks)
+                        m = re.search(r"prints 0x65,1\s+prints (\w+),1\s+prints (\w+),1", joined)
+                        if m:
+                            wid = m.group(2)
+                            clean_obj.setdefault("host_events", {})[ename] = {
+                                "page": "<page>" if m.group(1) == "dp" else m.group(1),
+                                "widget": int(wid, 0) if re.fullmatch(r"(0x[0-9a-fA-F]+|\d+)", wid) else wid,
+                            }
+                clean_objects.append(clean_obj)
+
+            pe = {"page": page_num, "objects": clean_objects, "name_hashes": hashes}
+            if init:
+                pe["init"] = init
+            pages.append(pe)
+        return pages, prolog
 
     def _event_name(self, type_name, slot):
         """Get human-readable event name for a component type and slot index."""
@@ -1478,22 +1731,46 @@ class TFTFile:
 
         # Update file checksum with the correct checksum algorithm
         series = self._getVal("model_series")
-        if series not in (0, 1, 2, 3, 100):
+        if series not in (0, 1, 2, 3, 4, 100):
             raise Exception(f"Unknown model series ({series}).")
         # Remove old checksum
         self.raw = self.raw[:-4]
-        if series in (2, 3):
-            # word based
-            words = len(self.raw) // 4
-            missingBytes = len(self.raw) - words * 4
-            words = list(struct.unpack("<{}I".format(words), self.raw + b"\x00" * missingBytes))
-            checksum = Checksum().CRC(data=words)
-        else:
-            # byte based
-            checksum = Checksum().CRC(data=self.raw)
-        # Checksum LSB is XORed with some bytes from the header
-        checksum ^= self.raw[0x03] ^ self.raw[0x2e] ^ self.raw[0x3c]
-        self.raw += struct.pack("<I", checksum)
+        self.raw += struct.pack("<I", self.computeFileChecksum(self.raw))
+
+    def computeFileChecksum(self, body=None):
+        """Checksum of the file (without the last 4 bytes): word based for the series 2, 3 and 4, byte based for the
+        others; its low byte is xored with bytes 0x03, 0x2e and 0x3c of the header."""
+        body = self.raw[:-4] if body is None else body
+        series = self._getVal("model_series")
+        v = Checksum().CRC_for_series(body, series)
+        return v ^ (body[0x03] ^ body[0x2e] ^ body[0x3c])
+
+    def computeResourceChecksum(self):
+        """Checksum of the resource region (header 1 ressource_files_crc), same algorithm family as the file checksum."""
+        h = self.header1.content
+        base, size = h["ressources_files_address"], h["ressource_files_size"]
+        return Checksum().CRC_for_series(self.raw[base:base + size], self._getVal("model_series"))
+
+    def verifyChecksums(self):
+        """Recomputes the checksums found in the file. Returns {name: (stored, computed, ok)}; header 2 is only
+        checked if it could be decoded."""
+        out = {}
+        raw = self.raw
+        h1 = self.header1
+        stored = struct.unpack_from("<I", raw, h1.start + h1.size - 4)[0]
+        calc = Checksum().CRC(data=raw[h1.start:h1.start + h1.size - 4])
+        out["header1"] = (stored, calc, stored == calc)
+        h2 = self.header2
+        stored = struct.unpack_from("<I", raw, h2.start + h2.size - 4)[0]
+        calc = Checksum().CRC(data=raw[h2.start:h2.start + h2.size - 4])
+        out["header2"] = (stored, calc, stored == calc)
+        stored = h1.content["ressource_files_crc"]
+        calc = self.computeResourceChecksum()
+        out["resources"] = (stored, calc, stored == calc)
+        stored = struct.unpack_from("<I", raw, len(raw) - 4)[0]
+        calc = self.computeFileChecksum()
+        out["file"] = (stored, calc, stored == calc)
+        return out
 
 
 ### Here begins the argparsing
@@ -1566,6 +1843,9 @@ if __name__ == '__main__':
             print(f"instructions: {tft.instruction_note}")
         for k, v in tft.header2.content.items():
             print(f"  {k:30} {v:#x}")
+        print("checksums:")
+        for k, (stored, calc, ok) in tft.verifyChecksums().items():
+            print(f"  {k:10} stored {stored:#010x} computed {calc:#010x} {'ok' if ok else 'MISMATCH'}")
         sys.exit(0)
     args.target = args.target.upper()
     if args.target == "TXT":
@@ -1581,6 +1861,8 @@ if __name__ == '__main__':
             counts = tft.writeOutput(out, includeUnknowns=True, pictures=not args.no_pictures, raw=args.raw)
             if args.v:
                 print(tft.getReadable(includeUnknowns=True))
+            if counts.get("errors"):
+                print(f"Warning: {counts['errors']} part(s) of the dump failed, see errors in {out}/info.json")
             msg = f"Output written to: {out}/ ({counts['pages']} pages"
             if counts["blocks_files"]:
                 msg += f", {counts['blocks_files']} flat block files"

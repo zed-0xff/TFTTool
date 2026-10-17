@@ -718,3 +718,38 @@ all_instruction_sets = [
         },
     },
 ]
+
+
+def _derive_nxt_1_68_2():
+    """Operator tables of nxt-1.68.2 (F series), found by aligning the compiled events of the nspanel-lovelace-ui
+    project with the nextion2text output of its source (about 17000 command lines).
+    Verified: the size-8 list is the older one with one entry inserted at index 13 (name unknown); in the size-4 list
+    xstr is at 22, draw at 34 and covx at 35. Entries that could not be verified are None (shown as op:<size>:<number>)."""
+    import copy
+    base = next(e for e in all_instruction_sets if "nxt-1.68.1" in e["versions"])
+    model = copy.deepcopy(base["models"][100])
+    ops = model["numerated_operators"]
+    ops[8].insert(13, None)
+    verified4 = {0: "i", 1: "pic", 3: "ref", 5: "vis", 9: "tsw", 10: "xpic", 11: "page", 12: "line", 13: "fill",
+                 22: "xstr", 34: "draw", 35: "covx"}
+    ops[4] = [verified4.get(i) for i in range(max(verified4) + 1)]
+    return {"versions": ["nxt-1.68.2"], "models": {100: model}, "priority": 10}
+
+
+all_instruction_sets.append(_derive_nxt_1_68_2())
+
+
+def _derive_nxt_1_65_1_series100():
+    """Same method as above for the nxt-1.65.1 F series file (nspanel_US_L-I.tft). The size-8 list of the generic
+    1.6x set is correct for it; in the size-4 list xstr is at 21 and covx at 34."""
+    import copy
+    base = next(e for e in all_instruction_sets if "nxt-1.68.1" in e["versions"])
+    model = copy.deepcopy(base["models"][100])
+    ops = model["numerated_operators"]
+    verified4 = {i: ops[4][i] for i in range(14)}
+    verified4.update({21: "xstr", 34: "covx"})
+    ops[4] = [verified4.get(i) for i in range(35)]
+    return {"versions": ["nxt-1.65.1"], "models": {100: model}, "priority": 10}
+
+
+all_instruction_sets.append(_derive_nxt_1_65_1_series100())

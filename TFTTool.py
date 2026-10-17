@@ -718,15 +718,19 @@ class TFTFile:
     # The picture section starts at header 2 "pictures_address" (absolute file offset) with a table of 24-byte records
     #   <4 bytes unknown (0a 60 01 04)> <id:u32> <offset:u32 (relative to the section)> <w:u16> <h:u16> <size:u32> <0:u32>
     # followed by the picture data. Each picture is
-    #   <fmt:u32 = 2> <w:u32> <h:u32> <magic:u32 = 0x05ddc33c> <stream length:u32>
-    #   <0:u16> <palette size n:u16> <bits:u8> <n * RGB565 (LE)> <mask:u8 = (0xff << bits) & 0xff>
-    #   <RLE stream>
-    # RLE stream: byte t: cnt = t >> bits, idx = t & ((1 << bits) - 1).
-    #   cnt == (0xff >> bits): escape, the palette bank for the following tokens is idx << bits
-    #   cnt == 0:              run of <next byte> pixels of palette entry bank + idx
+    #   <fmt:u32 = 2> <w:u32> <h:u32> <magic:u32 = 0x05ddc33c> <colour stream length:u32>
+    #   <colour stream> [<alpha stream>]
+    # The colour stream consists of one or more segments, each one of
+    #   <0:u16> <palette size n:u16> <bits:u8> <n * RGB565 (LE)> <mask:u8 = (0xff << bits) & 0xff> <tokens>
+    # Tokens: byte t, cnt = t >> bits, idx = t & ((1 << bits) - 1)
+    #   cnt == (0xff >> bits): escape, the palette bank for the following tokens is idx << bits (palettes can have
+    #                          more than 2^bits entries)
+    #   cnt == 0:              run of <next byte> pixels of palette entry bank + idx; a count of 0 ends the segment
+    #                          (the 00 00 then doubles as the leading zero word of the next segment)
     #   else:                  run of cnt pixels of palette entry bank + idx
-    # 26 pictures of the Sovol file carry a second stream after the first one (probably an alpha channel). It is
-    # returned raw and not decoded.
+    # Segments are used when a picture needs more colours than fit one palette (typically 256).
+    # The optional alpha stream follows the colour stream: tokens as above with bits = 7, no palette, no escapes, the
+    # value is the 7 bit alpha (0..127) itself.
 
     def getPictureRecords(self):
         start = self._getVal("pictures_address")
@@ -744,64 +748,105 @@ class TFTFile:
         return recs
 
     @staticmethod
-    def decodePicture(data:bytes):
-        """Returns a dict with w, h, palette (list of (r,g,b)), indices (bytes-like of palette indices), extra (raw
-        second stream) or None if the picture can't be decoded."""
+    def _rgb565(v):
+        return bytes((((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31))
+
+    @classmethod
+    def decodePicture(cls, data:bytes):
+        """Returns a dict with w, h, rgb (w*h*3 bytes), alpha (w*h bytes 0..255 or None) and segments,
+        or None if the picture can't be decoded."""
         try:
             fmt, w, h, magic, len1 = struct.unpack_from("<IIIII", data, 0)
             if fmt != 2 or w * h == 0:
                 return None
-            n = struct.unpack_from("<H", data, 22)[0]
-            bits = data[24]
-            if not 1 <= bits <= 7:
-                return None
-            pal = []
-            for k in range(n):
-                v = struct.unpack_from("<H", data, 25 + 2 * k)[0]
-                pal.append((((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31))
-            p = 25 + 2 * n + 1
-            end = 20 + len1
-            mask = (1 << bits) - 1
-            top = 0xff >> bits
-            out = array.array("H")  # palette indices can exceed 255
-            base = 0
             total = w * h
-            while p < end and len(out) < total:
-                t = data[p]
-                cnt = t >> bits
-                idx = t & mask
-                if cnt == top:
-                    base = idx << bits
-                    p += 1
-                    continue
-                if cnt == 0:
-                    cnt = data[p + 1]
-                    p += 2
-                else:
-                    p += 1
-                if base + idx >= n:
+            p = 20
+            end = 20 + len1
+            rgb = bytearray()
+            segments = 0
+            while p < end and len(rgb) < total * 3:
+                if data[p:p + 2] != b"\x00\x00":
                     return None
-                out.extend([base + idx] * cnt)
-            if len(out) != total or p != end:
+                n = struct.unpack_from("<H", data, p + 2)[0]
+                bits = data[p + 4]
+                if not 1 <= bits <= 7:
+                    return None
+                pal = [cls._rgb565(struct.unpack_from("<H", data, p + 5 + 2 * k)[0]) for k in range(n)]
+                q = p + 5 + 2 * n + 1
+                mask = (1 << bits) - 1
+                top = 0xff >> bits
+                base = 0
+                terminated = False
+                while q < end and len(rgb) < total * 3:
+                    t = data[q]
+                    cnt = t >> bits
+                    idx = t & mask
+                    if cnt == top:
+                        base = idx << bits
+                        q += 1
+                        continue
+                    if cnt == 0:
+                        cnt = data[q + 1]
+                        if cnt == 0:
+                            terminated = True
+                            break
+                        q += 2
+                    else:
+                        q += 1
+                    if base + idx >= n:
+                        return None
+                    rgb.extend(pal[base + idx] * cnt)
+                segments += 1
+                p = q
+                if not terminated:
+                    break
+            if len(rgb) != total * 3 or p != end:
                 return None
-            return {"w": w, "h": h, "palette": pal, "indices": out, "extra": data[end:]}
+
+            alpha = None
+            if end < len(data):
+                alpha = bytearray()
+                q = end
+                while q < len(data) and len(alpha) < total:
+                    t = data[q]
+                    if t & 0x80:
+                        alpha.append(t & 0x7f)
+                        q += 1
+                    else:
+                        alpha.extend(bytes([t]) * data[q + 1])
+                        q += 2
+                if len(alpha) != total or q != len(data):
+                    alpha = None
+                else:
+                    alpha = bytes(min(255, a * 255 // 127) for a in alpha)
+            return {"w": w, "h": h, "rgb": bytes(rgb), "alpha": alpha, "segments": segments}
         except Exception:
             return None
 
     @staticmethod
-    def writePNG(path, w, h, rgb:bytes):
+    def writePNG(path, w, h, rgb:bytes, alpha:bytes=None):
         import zlib
         def chunk(tag, payload):
             c = struct.pack(">I", len(payload)) + tag + payload
             return c + struct.pack(">I", zlib.crc32(tag + payload) & 0xffffffff)
-        rows = b"".join(b"\x00" + rgb[y * w * 3:(y + 1) * w * 3] for y in range(h))
-        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +
+        if alpha is not None:
+            px = bytearray(w * h * 4)
+            px[0::4] = rgb[0::3]
+            px[1::4] = rgb[1::3]
+            px[2::4] = rgb[2::3]
+            px[3::4] = alpha
+            stride, ctype = w * 4, 6
+        else:
+            px, stride, ctype = rgb, w * 3, 2
+        rows = b"".join(b"\x00" + bytes(px[y * stride:(y + 1) * stride]) for y in range(h))
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0)) +
                chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
         with open(path, "wb") as f:
             f.write(png)
 
     def exportPictures(self, directory):
-        """Writes all decodable pictures as PNG. Returns (written, failed) counts."""
+        """Writes all decodable pictures as PNG (with alpha if the picture has an alpha stream).
+        Returns (written, failed) counts."""
         from pathlib import Path as _P
         directory = _P(directory)
         directory.mkdir(parents=True, exist_ok=True)
@@ -811,11 +856,7 @@ class TFTFile:
             if not pic:
                 bad += 1
                 continue
-            pal = pic["palette"]
-            rgb = bytearray()
-            for ix in pic["indices"]:
-                rgb.extend(pal[ix])
-            self.writePNG(directory / f"{r['id']:03d}.png", pic["w"], pic["h"], bytes(rgb))
+            self.writePNG(directory / f"{r['id']:03d}.png", pic["w"], pic["h"], pic["rgb"], pic["alpha"])
             ok += 1
         return ok, bad
 
@@ -894,9 +935,9 @@ class TFTFile:
         for r in self.getPictureRecords():
             pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]])
             pics.append({"id": r["id"], "w": r["w"], "h": r["h"], "size": r["size"],
-                         "palette_colors": len(pic["palette"]) if pic else None,
                          "decoded": bool(pic),
-                         "second_stream_bytes": len(pic["extra"]) if pic else None})
+                         "segments": pic["segments"] if pic else None,
+                         "has_alpha": bool(pic and pic["alpha"] is not None)})
         d["pictures"] = pics
 
         # Raw headers — all integer values for parseability

@@ -62,10 +62,11 @@ The HMI source file (and its license) can be found in this repository: https://g
   host, `host_events` with the widget id that arrives in the `0x65 <page> <widget> <press/release> FF FF FF` frame.
 * `--extract DIR` writes the raw resource region and the raw usercode as binary files.
 
-* Pictures: the picture table (24-byte records at `pictures_address`) is parsed and the palette+RLE images are decoded.
-  `--extract DIR` writes them to `DIR/pictures/NNN.png`; the JSON output has a `pictures` list. The format is
-  documented in the comment above `getPictureRecords()`.
+* Pictures: the picture table (24-byte records at `pictures_address`) is parsed and the palette+RLE images are decoded,
+  including multi-segment pictures (more than 256 colours) and the 7-bit alpha stream. `--extract DIR` writes them to
+  `DIR/pictures/NNN.png` (RGBA where there is alpha); the JSON output has a `pictures` list. The format is documented
+  in the comment above `getPictureRecords()`. All pictures of the two TJC test files (88 and 475) decode; Nextion
+  files use a different picture encoding and are not decoded.
 
-Known limitations: pictures with exactly 256 palette entries (5 of 88 in the Sovol file, 18 of 475 in the QIDI file)
-and the second stream that 26 Sovol pictures carry (probably an alpha channel) are not decoded; series 4 uses the series 3 instruction set (not verified); Nextion example files still fall back
+Known limitations: series 4 uses the series 3 instruction set (not verified); Nextion example files still fall back
 to a flat block list instead of per-page output.

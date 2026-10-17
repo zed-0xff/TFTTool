@@ -910,6 +910,15 @@ class TFTFile:
     # Segments are used when a picture needs more colours than fit one palette (typically 256).
     # The optional alpha stream follows the colour stream: tokens as above with bits = 7, no palette, no escapes, the
     # value is the 7 bit alpha (0..127) itself.
+    #
+    # Format 0 (Nextion F series): <20 bytes 0> and the raw RGB565 pixels (tiny pictures).
+    #
+    # Format 1 (Nextion F series):
+    #   <fmt:u32 = 1> <stream length:u32> <12 bytes 0>  followed by blocks of 20 bytes
+    #   <eight run lengths: 4 bytes, two 4 bit values per byte, low nibble first, 0 = unused> <8 * RGB565 (LE)>
+    # i.e. a run length encoding of the whole image in raster order, eight (colour, length) runs per block; a run is
+    # at most 15 pixels long, longer ones are split. After the blocks comes a random access index (a table of
+    # <key:u32> <offset:u32> pairs and the run lengths of each row) that is not needed for decoding.
 
     def getPictureRecords(self):
         start = self._getVal("pictures_address")
@@ -927,9 +936,10 @@ class TFTFile:
         return recs
 
     def _pictureDims(self, rec):
-        """Width and height of a raw picture: the picture table holds them in the unrotated frame, so they are swapped
-        for portrait projects (ui_orientation 1 and 3)."""
-        if self._getVal("ui_orientation") in (1, 3):
+        """Width and height of a picture. For the headerless raw pictures of the Nextion T0/K0 series (0 and 1) the
+        picture table holds them in the unrotated frame, so they are swapped for portrait projects (ui_orientation 1
+        and 3). The F series (100) and TJC files store them as they are."""
+        if self._getVal("ui_orientation") in (1, 3) and self._getVal("model_series") in (0, 1):
             return rec["h"], rec["w"]
         return rec["w"], rec["h"]
 
@@ -949,6 +959,12 @@ class TFTFile:
                 for i, v in enumerate(px):
                     rgb[3 * i:3 * i + 3] = cls._rgb565(v)
                 return {"w": w, "h": h, "rgb": bytes(rgb), "alpha": None, "segments": 0, "raw": True}
+            fmt = struct.unpack_from("<I", data, 0)[0]
+            if fmt == 0 and w and h and len(data) == 20 + w * h * 2:
+                # F series: 20 byte header (all 0) and raw RGB565, used for tiny pictures
+                return cls.decodePicture(data[20:], w, h)
+            if fmt == 1 and w and h:
+                return cls._decodeRunBlocks(data, w, h)
             fmt, w, h, magic, len1 = struct.unpack_from("<IIIII", data, 0)
             if fmt != 2 or w * h == 0:
                 return None
@@ -1015,6 +1031,31 @@ class TFTFile:
             return {"w": w, "h": h, "rgb": bytes(rgb), "alpha": alpha, "segments": segments}
         except Exception:
             return None
+
+    @classmethod
+    def _decodeRunBlocks(cls, data, w, h):
+        """Picture format 1, see the format description above getPictureRecords()."""
+        n1 = struct.unpack_from("<I", data, 4)[0]
+        if n1 % 20 or 20 + n1 > len(data):
+            return None
+        total = w * h
+        rgb = bytearray()
+        colour = {}
+        for j in range(20, 20 + n1, 20):
+            cols = struct.unpack_from("<8H", data, j + 4)
+            lens = []
+            for byte in data[j:j + 4]:
+                lens += [byte & 15, byte >> 4]
+            for c, n in zip(cols, lens):
+                if n:
+                    if c not in colour:
+                        colour[c] = cls._rgb565(c)
+                    rgb += colour[c] * n
+            if len(rgb) >= total * 3:
+                break
+        if len(rgb) < total * 3:
+            return None
+        return {"w": w, "h": h, "rgb": bytes(rgb[:total * 3]), "alpha": None, "segments": 1}
 
     @staticmethod
     def writePNG(path, w, h, rgb:bytes, alpha:bytes=None):
@@ -1126,6 +1167,22 @@ class TFTFile:
         except Exception:
             pass
         return {"first_code": glyphs[0]["code"] if glyphs else None, "glyph_count": len(glyphs), "glyphs": glyphs}
+
+    @staticmethod
+    def glyphRunLengths(glyph):
+        """Pixel count of every token of a compressed glyph (data starts with a type byte 3 or 1). The pixel levels are
+        NOT decoded; the counts sum to advance * line height for ~87% of the glyphs (checked on NotoSans .zi fonts)."""
+        def run(t):
+            if t < 0x20:
+                return t
+            if t < 0x40:
+                return t & 0x1f
+            if t < 0x80:
+                return (t & 0x1f) + 1
+            if t < 0xc0:
+                return ((t >> 3) & 7) + 1
+            return 2
+        return [run(t) for t in glyph[1:]]
 
     def getRawBootloader(self):
         start = self._getVal("ressources_files_address")

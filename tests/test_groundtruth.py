@@ -1,4 +1,5 @@
 import collections
+import os
 import re
 import unittest
 
@@ -72,6 +73,42 @@ class AgainstNextion2Text(unittest.TestCase):
             with self.subTest(file=path):
                 self.assertGreater(want_total, 3000)
                 self.assertGreaterEqual(hit / want_total, 0.999, f"{hit}/{want_total}")
+
+
+@unittest.skipUnless(PAIRS, "nspanel-lovelace-ui checkout not found next to the tool")
+class PicturesAgainstSource(unittest.TestCase):
+    """The .HMI project contains the pictures as PNG files; decoded pictures must be identical to them (as RGB565).
+    Some pictures are gradients that the editor dithers, those can't be compared."""
+
+    def test_pictures_match_png_sources(self):
+        try:
+            import io
+            import re
+            from PIL import Image
+        except ImportError:
+            self.skipTest("PIL not installed")
+        tft_path, _ = PAIRS[0]
+        hmi_path = tft_path[:-4] + ".HMI"
+        if not os.path.exists(hmi_path):
+            self.skipTest("no .HMI next to the .tft")
+        data = open(hmi_path, "rb").read()
+        sources = {}
+        for m in re.finditer(rb"\x89PNG\r\n\x1a\n", data):
+            end = data.find(b"IEND", m.start()) + 8
+            try:
+                im = Image.open(io.BytesIO(data[m.start():end])).convert("RGB")
+            except Exception:
+                continue
+            sources.setdefault(im.size, []).append([(r >> 3, g >> 2, b >> 3) for r, g, b in im.getdata()])
+        t = helpers.load(tft_path, decode_usercode=False)
+        recs = t.getPictureRecords()
+        exact = 0
+        for r in recs:
+            pic = t.decodePicture(t.raw[r["offset"]:r["offset"] + r["size"]], *t._pictureDims(r))
+            self.assertIsNotNone(pic, r["id"])
+            px = [(pic["rgb"][i] >> 3, pic["rgb"][i + 1] >> 2, pic["rgb"][i + 2] >> 3) for i in range(0, len(pic["rgb"]), 3)]
+            exact += any(c == px for c in sources.get((pic["w"], pic["h"]), []))
+        self.assertGreaterEqual(exact, len(recs) * 0.75, f"{exact}/{len(recs)}")
 
 
 if __name__ == "__main__":

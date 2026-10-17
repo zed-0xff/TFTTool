@@ -125,3 +125,8 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 * Glyph bitmaps of the fonts are not decoded.
 * Component attributes other than id, geometry and text (font, colours, ...) are not decoded.
 * Nextion T0/K0 files are only tested with the two sample files.
+
+### Glyph bitmaps (partial)
+Glyph streams are tokenised with a per-token pixel count (`TFTFile.glyphRunLengths`; sums to advance x line height for
+~1600 of 1830 glyphs of the NotoSans 24 `.zi`), but the pixel level coding of the tokens is still unknown, so no glyph
+bitmaps are exported.

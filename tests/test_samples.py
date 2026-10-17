@@ -54,8 +54,6 @@ class SampleFiles(unittest.TestCase):
                 continue
             with self.subTest(file=os.path.basename(f)):
                 ok = sum(1 for r in recs if t.decodePicture(t.raw[r["offset"]:r["offset"] + r["size"]], *t._pictureDims(r)))
-                if t._getVal("model_series") == 100 and t.header2_note.startswith("header 2 derived"):
-                    continue        # F series pictures use another format (format 1), not decoded yet
                 self.assertEqual(ok, len(recs))
 
     def test_fonts(self):

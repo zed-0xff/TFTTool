@@ -113,3 +113,28 @@ def make_picture_segments(w, h, segments, bits=6):
         if k + 1 < len(segments):
             body += b"\x00\x00"
     return struct.pack("<IIIII", 2, w, h, 0x05ddc33c, len(body)) + bytes(body)
+
+
+def make_picture_format1(w, h, pixels):
+    """Nextion F series picture format 1: blocks of eight (colour, run length) runs, a trailing index is not needed.
+    pixels: list of RGB565 values in raster order."""
+    runs = []
+    i = 0
+    while i < len(pixels):
+        j = i
+        while j + 1 < len(pixels) and pixels[j + 1] == pixels[i] and j - i < 14:
+            j += 1
+        runs.append((pixels[i], j - i + 1))
+        i = j + 1
+    blocks = bytearray()
+    for k in range(0, len(runs), 8):
+        chunk = runs[k:k + 8] + [(0, 0)] * (8 - len(runs[k:k + 8]))
+        tag = bytearray()
+        for m in range(0, 8, 2):
+            tag.append(chunk[m][1] | (chunk[m + 1][1] << 4))
+        blocks += bytes(tag) + b"".join(struct.pack("<H", c) for c, _ in chunk)
+    return struct.pack("<II", 1, len(blocks)) + bytes(12) + bytes(blocks) + b"\x00" * 16   # + some index bytes
+
+
+def make_picture_format0(w, h, pixels):
+    return bytes(20) + struct.pack(f"<{w * h}H", *pixels)

@@ -68,6 +68,29 @@ class DecodePicture(unittest.TestCase):
                  b"".join(T.TFTFile._rgb565(helpers.rgb565(*pal2[i])) for i in idx2)
         self.assertEqual(pic["rgb"], expect)
 
+    def test_format1_run_blocks(self):
+        w, h = 50, 6
+        px = []
+        for y in range(h):
+            px += [helpers.rgb565(0, 0, 0)] * 20 + [helpers.rgb565(255, 255, 255), helpers.rgb565(9, 90, 200)] * 2 \
+                  + [helpers.rgb565(255, 0, 0)] * (w - 24)
+        data = helpers.make_picture_format1(w, h, px)
+        pic = T.TFTFile.decodePicture(data, w, h)
+        self.assertIsNotNone(pic)
+        expect = b"".join(T.TFTFile._rgb565(p) for p in px)
+        self.assertEqual(pic["rgb"], expect)
+
+    def test_format1_needs_the_size(self):
+        data = helpers.make_picture_format1(4, 4, [1] * 16)
+        self.assertIsNone(T.TFTFile.decodePicture(data))                 # format 1 has no w/h in its header
+        self.assertIsNone(T.TFTFile.decodePicture(data, 40, 40))         # not enough pixels for that size
+
+    def test_format0_raw_with_header(self):
+        w, h = 3, 2
+        px = [helpers.rgb565(255, 0, 0), 0, 0xffff, 5, 6, 7]
+        pic = T.TFTFile.decodePicture(helpers.make_picture_format0(w, h, px), w, h)
+        self.assertEqual(pic["rgb"], b"".join(T.TFTFile._rgb565(p) for p in px))
+
     def test_raw_rgb565(self):
         w, h = 3, 2
         px = [helpers.rgb565(255, 0, 0)] * 3 + [helpers.rgb565(0, 0, 255)] * 3

@@ -563,35 +563,139 @@ class TFTFile:
             self.model = self._models[self._modelCRCs.index(self._getVal("model_crc"))]
         except:
             self.model = "Unknown display model"
-        decode_hint = 0
-        if self.model in self._modelXORs:
-            decode_hint = self._modelXORs[self.model]
-        if header2_hint:
-            decode_hint = header2_hint
-
-        # Select header2 layout based on editor version
-        h2_layout = self._fileHeader2
-        v_main = self.header1.content.get("editor_version_main", 0)
-        v_sub = self.header1.content.get("editor_version_sub", 0)
-        if v_main > 1 or (v_main == 1 and v_sub >= 67):
-            h2_layout = self._fileHeader2_ext
-        self.header2 = HeaderData(self.raw, h2_layout, decode_hint)
+        self.header2_note = ""
+        self.header2 = self._load_header2(header2_hint)
 
         # Determine correct instruction set based on editor and model series
-        version_str = self.getEditorVersionStr()
-        self.instructions = None
-        for e in all_instruction_sets:
-            if version_str in e["versions"]:
-                self.instructions = e["models"][self._getVal("model_series")]
-                break
+        self.instruction_note = ""
+        self.instructions = self._find_instructions()
         if not self.instructions:
-            print(f"Warning: No instruction set found that matches editor version {version_str}. "
+            print(f"Warning: No instruction set found that matches editor version {self.getEditorVersionStr()}. "
                   f"You won't be able to decode any usercode. ")
+        elif self.instruction_note:
+            print(f"Warning: {self.instruction_note}")
 
         # Decode Usercode if requested
         self.usercode = None
         if decode_usercode:
             self.decode_usercode(hexVals=hexVals)
+
+    # ---- Header 2 detection -------------------------------------------------------------------------------------
+
+    # Keys that were recovered from files whose model name is unknown (CRC of the name -> (label, key)).
+    _learnedModels = {
+        0x38a388a8: ("unknown 480x272 series-4 (Sovol SV08 Max)", 0xf3d2481f),
+        0x7527dcfa: ("unknown 800x480 series-4 (QIDI Plus3)",     0xd6068b8d),
+    }
+
+    # Header 2 layouts, tried in this order. They differ only in whether the two app_vas words are present.
+    @classmethod
+    def _header2Layouts(cls):
+        ext = cls._fileHeader2_ext
+        legacy = cls._fileHeader2
+        return [("ext", ext), ("legacy", legacy)]
+
+    def _validateHeader2(self, h2):
+        """Plausibility check of a decoded header 2. Returns a score (number of passed checks) and the max."""
+        c = h2.content
+        res_addr = self.header1.content["ressources_files_address"]
+        res_size = self.header1.content["ressource_files_size"]
+        fsize = len(self.raw)
+        checks = [
+            c["ressources_files_address"] == res_addr,
+            c["usercode_address"] == res_addr + res_size,
+            c["usercode_address"] < fsize,
+            c["unknown_pages_address"] >= c["usercode_address"],
+            c["unknown_pages_address"] < c["unknown_objects_address"] <= fsize,
+            c["pages_count"] > 0 and (c["unknown_objects_address"] - c["unknown_pages_address"]) % c["pages_count"] == 0,
+        ]
+        return sum(checks), len(checks)
+
+    def _load_header2(self, hint):
+        """Find the header 2 layout and XOR key.
+        Order of preference: explicit hint, key of the known/learned model, key derived from header 1.
+        The key is derived by using the fact that header 2 repeats ressources_files_address from header 1."""
+        h1 = self.header1.content
+        res_addr = h1["ressources_files_address"]
+        if hint:
+            layout = self._header2Layouts()[0][1]
+            if self._getVal("editor_version_main") == 1 and self._getVal("editor_version_sub") < 65:
+                layout = self._fileHeader2
+            self.header2_note = "header 2 given by user"
+            return HeaderData(self.raw, layout, hint)
+
+        candidates = []  # (label, key)
+        crc = h1["model_crc"]
+        if self.model in self._modelXORs:
+            candidates.append(("model key", self._modelXORs[self.model]))
+        if crc in self._learnedModels:
+            candidates.append(("learned key", self._learnedModels[crc][1]))
+        best = None
+        for lname, layout in self._header2Layouts():
+            keys = list(candidates)
+            # Derive a key from the position of ressources_files_address in this layout.
+            off = layout["start"] + 4 * list(layout["content"]).index("ressources_files_address")
+            derived = struct.unpack_from("<I", self.raw, off)[0] ^ res_addr
+            keys.append(("derived key", derived))
+            keys.append(("no key", 0))
+            for kname, key in keys:
+                try:
+                    h2 = HeaderData(self.raw, layout, key)
+                except Exception:
+                    continue
+                score, total = self._validateHeader2(h2)
+                if best is None or score > best[0]:
+                    best = (score, total, h2, lname, kname, key)
+                if score == total:
+                    break
+            if best and best[0] == best[1]:
+                break
+        score, total, h2, lname, kname, key = best
+        self.header2_note = f"layout={lname}, {kname}=0x{key:08x}, validation {score}/{total}"
+        if score < total:
+            print(f"Warning: header 2 could not be fully validated ({self.header2_note}). Values may be wrong; "
+                  f"consider passing --header2.")
+        return h2
+
+    # ---- Instruction set selection ------------------------------------------------------------------------------
+
+    @staticmethod
+    def _versionTuple(v):
+        nums = re.findall(r"\d+", v)
+        return tuple(int(n) for n in nums)
+
+    def _find_instructions(self):
+        """Exact editor version match first. Otherwise the closest known version of the same vendor (and then of the
+        other vendor). Series that aren't covered are mapped to the closest known series."""
+        version_str = self.getEditorVersionStr()
+        vendor = version_str.split("-")[0]
+        series = self._getVal("model_series")
+        want = self._versionTuple(version_str)
+        cands = []  # (priority, distance, entry, version)
+        for e in all_instruction_sets:
+            for v in e["versions"]:
+                vv = self._versionTuple(v)
+                if v == version_str:
+                    prio = 0
+                elif v.split("-")[0] == vendor:
+                    prio = 1
+                else:
+                    prio = 2
+                dist = (abs(vv[0] - want[0]), abs(vv[1] - want[1]) if len(vv) > 1 else 0)
+                cands.append((prio, dist, id(e), e, v))
+        cands.sort(key=lambda x: x[:3])
+        series_pref = [series, 3, 100, 0, 1, 2]
+        for prio, dist, _, e, v in cands:
+            for sr in series_pref:
+                if sr in e["models"]:
+                    notes = []
+                    if v != version_str:
+                        notes.append(f"no instruction set for editor {version_str}, using {v}")
+                    if sr != series:
+                        notes.append(f"no instruction set for model series {series}, using series {sr}")
+                    self.instruction_note = "; ".join(notes)
+                    return e["models"][sr]
+        return None
 
     def getEditorVersionStr(self):
         vendor = {ord("T"): "tjc", ord("N"): "nxt"}[self._getVal("editor_vendor")]
@@ -610,7 +714,7 @@ class TFTFile:
 
     def getRawBootloader(self):
         start = self._getVal("ressources_files_address")
-        end = start + self._getVal("ressources_files_size")
+        end = start + self._getVal("ressource_files_size")
         return self.raw[start:end]
 
     def getRawPictures(self):
@@ -639,20 +743,20 @@ class TFTFile:
             return self.raw[start : start + static_size]
         return self.raw[start : pages_addr]
 
-    def exportRawBootloader(self, path = "/Raw/Bootloader.bin"):
-        with open(path, "w") as f:
+    def exportRawBootloader(self, path = "Raw/Bootloader.bin"):
+        with open(path, "wb") as f:
             f.write(self.getRawBootloader())
 
-    def exportRawPictures(self, path = "/Raw/Pictures.bin"):
-        with open(path, "w") as f:
+    def exportRawPictures(self, path = "Raw/Pictures.bin"):
+        with open(path, "wb") as f:
             f.write(self.getRawPictures())
 
-    def exportRawFonts(self, path = "/Raw/Fonts.bin"):
-        with open(path, "w") as f:
+    def exportRawFonts(self, path = "Raw/Fonts.bin"):
+        with open(path, "wb") as f:
             f.write(self.getRawFonts())
 
-    def exportRawUsercode(self, path = "/Raw/Usercode.bin"):
-        with open(path, "w") as f:
+    def exportRawUsercode(self, path = "Raw/Usercode.bin"):
+        with open(path, "wb") as f:
             f.write(self.getRawUsercode())
 
     def getReadable(self, includeUnknowns=False):
@@ -775,6 +879,17 @@ class TFTFile:
                     }
                     if obj_i in obj_events:
                         clean_obj["events"] = obj_events[obj_i]
+                        # Touch events that report to the host look like "prints 0x65,1 / prints dp,1 / prints N,1 /
+                        # prints 0xff,1 x3", i.e. the 0x65 frame: 65 <page> <widget> <press/release> FF FF FF.
+                        for ename, blks in obj_events[obj_i].items():
+                            joined = "\n".join(blk["content"] for blk in blks)
+                            m = re.search(r"prints 0x65,1\s+prints (\w+),1\s+prints (\w+),1", joined)
+                            if m:
+                                wid = m.group(2)
+                                clean_obj.setdefault("host_events", {})[ename] = {
+                                    "page": "<page>" if m.group(1) == "dp" else m.group(1),
+                                    "widget": int(wid, 0) if re.fullmatch(r"(0x[0-9a-fA-F]+|\d+)", wid) else wid,
+                                }
                     clean_objects.append(clean_obj)
 
                 _, dict_blk = blocks[dict_idx]
@@ -864,26 +979,37 @@ class TFTFile:
 
         if pages_addr == 0 or obj_addr == 0 or pages_count == 0:
             return None
+        # Page record size: 12 bytes in editor 1.61, 16 bytes in 1.65+. Derive it from the section size.
         page_sec_size = obj_addr - pages_addr
-        if page_sec_size != pages_count * 16:
+        if page_sec_size % pages_count != 0 or page_sec_size // pages_count < 4:
             return None
+        page_rec_size = page_sec_size // pages_count
+        self.page_record_size = page_rec_size
+        # The object record size differs between editor versions (232 in 1.67, 204 in 1.65.5, ...). The object section
+        # runs up to the file checksum, so derive the record size from it.
         obj_sec_size = len(self.raw) - 4 - obj_addr  # -4 for file checksum
-        if obj_sec_size < obj_count * 232:
+        # (a few padding bytes after the last record are tolerated, e.g. QIDI's 1.67 files have one)
+        if obj_count == 0 or obj_sec_size % obj_count > 8:
             return None
+        rec_size = obj_sec_size // obj_count
+        if rec_size < 48:
+            return None
+        self.object_record_size = rec_size
 
         result = []
         obj_idx = 0
         for pg in range(pages_count):
-            prec = self.raw[pages_addr + pg * 16 : pages_addr + (pg + 1) * 16]
+            prec = self.raw[pages_addr + pg * page_rec_size : pages_addr + (pg + 1) * page_rec_size]
             _first_id, obj_cnt = struct.unpack_from("<HH", prec, 0)
 
             objects = []
             for j in range(obj_cnt):
-                off = obj_addr + obj_idx * 232
+                off = obj_addr + obj_idx * rec_size
                 type_code = self.raw[off]
                 obj_id = self.raw[off + 1] | (self.raw[off + 2] << 8)
                 event_ptrs = struct.unpack_from("<6I", self.raw, off + 4)
-                x, y, w, h = struct.unpack_from("<HHHH", self.raw, off + 40)
+                x, y = struct.unpack_from("<hh", self.raw, off + 40)  # signed: components can be placed off-screen
+                w, h = struct.unpack_from("<HH", self.raw, off + 44)
                 type_name = self._nextion_type_names.get(type_code, f"unknown_0x{type_code:02x}")
                 objects.append({
                     "id": obj_id, "type": type_name,
@@ -996,6 +1122,12 @@ if __name__ == '__main__':
     parser.add_argument("-f", "--force", action="store_true",
                         help="Add this flag to skip the model check during conversion. Not recommended and probably "
                              "doesn't give you the results you want. Use at your own risk. ")
+    parser.add_argument("--probe", action="store_true",
+                        help="Only print what was detected about the file (model, editor version, header 2 layout and "
+                             "XOR key, validation result, section addresses) and exit.")
+    parser.add_argument("--extract", metavar="DIR", default="",
+                        help="Write the raw resource region (bootloader, pictures, fonts) and the raw usercode "
+                             "to DIR as binary files.")
     parser.add_argument("-v", action="store_true",
                         help="Add this flag to write the decoded text to the console. Useless with -t")
 
@@ -1008,7 +1140,25 @@ if __name__ == '__main__':
         outputPath = Path(outputPath)
 
     with open(tftPath, "rb") as f:
-        tft = TFTFile(f.read(), header2_hint=args.header2)
+        tft = TFTFile(f.read(), header2_hint=args.header2, decode_usercode=not args.probe)
+
+    if args.probe:
+        print(f"model:        {tft.model}")
+        print(f"editor:       {tft.getEditorVersionStr()}  series {tft._getVal('model_series')}")
+        print(f"resolution:   {tft._getVal('lcd_resolution_x')}x{tft._getVal('lcd_resolution_y')}")
+        print(f"header 2:     {tft.header2_note}")
+        if tft.instruction_note:
+            print(f"instructions: {tft.instruction_note}")
+        for k, v in tft.header2.content.items():
+            print(f"  {k:30} {v:#x}")
+        sys.exit(0)
+    if args.extract:
+        out = Path(args.extract)
+        out.mkdir(parents=True, exist_ok=True)
+        res_start = tft._getVal("ressources_files_address")
+        (out / "resources.bin").write_bytes(tft.raw[res_start:res_start + tft._getVal("ressource_files_size")])
+        (out / "usercode.bin").write_bytes(tft.getRawUsercode())
+        print(f"Raw sections written to: {out}")
 
     args.target = args.target.upper()
     if args.target == "TXT":

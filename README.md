@@ -46,3 +46,21 @@ Notes:
 In the [Example](./Example) subfolder you'll find a [TFT file](./Example/HSV%20Test.tft) and the [resulting text file](./Example/HSV%20Test.txt). 
 
 The HMI source file (and its license) can be found in this repository: https://github.com/MMMZZZZ/Random-Stuff/tree/eea7398335ff6a92c16227dbe911bf3e18e9728d/Nextion%20HSV%20Test
+
+
+## Fork additions
+
+* Header 2 layout and XOR key are detected automatically. The key is derived from `ressources_files_address`,
+  which header 1 and header 2 both contain. The result is validated against six consistency checks.
+  `--probe` prints what was detected. This makes files from models that are missing in `_modelXORs` work
+  (two such keys are recorded in `_learnedModels`).
+* Page and object record sizes are derived from the section sizes (they differ between editor versions:
+  page 12/16 bytes, object 232/204/194 bytes).
+* Instruction sets for `tjc-1.65.5`/`tjc-1.66.1` and `nxt-1.6x`. If the editor version or model series has no
+  instruction set, the closest one is used and a warning is printed.
+* Output (JSON) contains pages with components (type, x/y/w/h, events) and, for touch events that report to the
+  host, `host_events` with the widget id that arrives in the `0x65 <page> <widget> <press/release> FF FF FF` frame.
+* `--extract DIR` writes the raw resource region and the raw usercode as binary files.
+
+Known limitations: series 4 uses the series 3 instruction set (not verified); Nextion example files still fall back
+to a flat block list instead of per-page output.

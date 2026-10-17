@@ -12,6 +12,7 @@ import struct
 import json
 import string
 import argparse
+import array
 import re
 from pathlib import Path
 from NextionChecksum import Checksum
@@ -712,6 +713,112 @@ class TFTFile:
             raise Exception("A valid instruction set is required to decode the usercode. ")
         self.usercode = Usercode(self.instructions, self.getRawUsercode(), hexVals)
 
+    # ---- Pictures -------------------------------------------------------------------------------------------------
+    #
+    # The picture section starts at header 2 "pictures_address" (absolute file offset) with a table of 24-byte records
+    #   <4 bytes unknown (0a 60 01 04)> <id:u32> <offset:u32 (relative to the section)> <w:u16> <h:u16> <size:u32> <0:u32>
+    # followed by the picture data. Each picture is
+    #   <fmt:u32 = 2> <w:u32> <h:u32> <magic:u32 = 0x05ddc33c> <stream length:u32>
+    #   <0:u16> <palette size n:u16> <bits:u8> <n * RGB565 (LE)> <mask:u8 = (0xff << bits) & 0xff>
+    #   <RLE stream>
+    # RLE stream: byte t: cnt = t >> bits, idx = t & ((1 << bits) - 1).
+    #   cnt == (0xff >> bits): escape, the palette bank for the following tokens is idx << bits
+    #   cnt == 0:              run of <next byte> pixels of palette entry bank + idx
+    #   else:                  run of cnt pixels of palette entry bank + idx
+    # 26 pictures of the Sovol file carry a second stream after the first one (probably an alpha channel). It is
+    # returned raw and not decoded.
+
+    def getPictureRecords(self):
+        start = self._getVal("pictures_address")
+        count = self._getVal("pictures_count")
+        recs = []
+        if start == 0 or start + 24 * count > len(self.raw):
+            return recs
+        for i in range(count):
+            o = start + 24 * i
+            hdr = self.raw[o:o + 4]
+            pid, off, w, h, size, _ = struct.unpack_from("<IIHHII", self.raw, o + 4)
+            if start + off + size > len(self.raw):
+                break
+            recs.append({"id": pid, "offset": start + off, "w": w, "h": h, "size": size, "flags": hdr.hex()})
+        return recs
+
+    @staticmethod
+    def decodePicture(data:bytes):
+        """Returns a dict with w, h, palette (list of (r,g,b)), indices (bytes-like of palette indices), extra (raw
+        second stream) or None if the picture can't be decoded."""
+        try:
+            fmt, w, h, magic, len1 = struct.unpack_from("<IIIII", data, 0)
+            if fmt != 2 or w * h == 0:
+                return None
+            n = struct.unpack_from("<H", data, 22)[0]
+            bits = data[24]
+            if not 1 <= bits <= 7:
+                return None
+            pal = []
+            for k in range(n):
+                v = struct.unpack_from("<H", data, 25 + 2 * k)[0]
+                pal.append((((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31))
+            p = 25 + 2 * n + 1
+            end = 20 + len1
+            mask = (1 << bits) - 1
+            top = 0xff >> bits
+            out = array.array("H")  # palette indices can exceed 255
+            base = 0
+            total = w * h
+            while p < end and len(out) < total:
+                t = data[p]
+                cnt = t >> bits
+                idx = t & mask
+                if cnt == top:
+                    base = idx << bits
+                    p += 1
+                    continue
+                if cnt == 0:
+                    cnt = data[p + 1]
+                    p += 2
+                else:
+                    p += 1
+                if base + idx >= n:
+                    return None
+                out.extend([base + idx] * cnt)
+            if len(out) != total or p != end:
+                return None
+            return {"w": w, "h": h, "palette": pal, "indices": out, "extra": data[end:]}
+        except Exception:
+            return None
+
+    @staticmethod
+    def writePNG(path, w, h, rgb:bytes):
+        import zlib
+        def chunk(tag, payload):
+            c = struct.pack(">I", len(payload)) + tag + payload
+            return c + struct.pack(">I", zlib.crc32(tag + payload) & 0xffffffff)
+        rows = b"".join(b"\x00" + rgb[y * w * 3:(y + 1) * w * 3] for y in range(h))
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +
+               chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+        with open(path, "wb") as f:
+            f.write(png)
+
+    def exportPictures(self, directory):
+        """Writes all decodable pictures as PNG. Returns (written, failed) counts."""
+        from pathlib import Path as _P
+        directory = _P(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        ok = bad = 0
+        for r in self.getPictureRecords():
+            pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]])
+            if not pic:
+                bad += 1
+                continue
+            pal = pic["palette"]
+            rgb = bytearray()
+            for ix in pic["indices"]:
+                rgb.extend(pal[ix])
+            self.writePNG(directory / f"{r['id']:03d}.png", pic["w"], pic["h"], bytes(rgb))
+            ok += 1
+        return ok, bad
+
     def getRawBootloader(self):
         start = self._getVal("ressources_files_address")
         end = start + self._getVal("ressource_files_size")
@@ -782,6 +889,15 @@ class TFTFile:
         if not self.header2.encrypted:
             info["header2_key_unknown"] = True
         d["info"] = info
+
+        pics = []
+        for r in self.getPictureRecords():
+            pic = self.decodePicture(self.raw[r["offset"]:r["offset"] + r["size"]])
+            pics.append({"id": r["id"], "w": r["w"], "h": r["h"], "size": r["size"],
+                         "palette_colors": len(pic["palette"]) if pic else None,
+                         "decoded": bool(pic),
+                         "second_stream_bytes": len(pic["extra"]) if pic else None})
+        d["pictures"] = pics
 
         # Raw headers — all integer values for parseability
         d["header1"] = dict([(k, v) for k, v in self.header1.content.items()
@@ -1158,7 +1274,8 @@ if __name__ == '__main__':
         res_start = tft._getVal("ressources_files_address")
         (out / "resources.bin").write_bytes(tft.raw[res_start:res_start + tft._getVal("ressource_files_size")])
         (out / "usercode.bin").write_bytes(tft.getRawUsercode())
-        print(f"Raw sections written to: {out}")
+        ok, bad = tft.exportPictures(out / "pictures")
+        print(f"Raw sections written to: {out}; pictures decoded: {ok}, not decodable: {bad}")
 
     args.target = args.target.upper()
     if args.target == "TXT":

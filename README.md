@@ -60,11 +60,10 @@ The HMI source file (and its license) can be found in this repository: https://g
   instruction set, the closest one is used and a warning is printed.
 * Output (JSON) contains pages with components (type, x/y/w/h, events) and, for touch events that report to the
   host, `host_events` with the widget id that arrives in the `0x65 <page> <widget> <press/release> FF FF FF` frame.
-* `--extract DIR` writes the raw resource region and the raw usercode as binary files.
 
 * Pictures: the picture table (24-byte records at `pictures_address`) is parsed and the palette+RLE images are decoded,
-  including multi-segment pictures (more than 256 colours) and the 7-bit alpha stream. `--extract DIR` writes them to
-  `DIR/pictures/NNN.png` (RGBA where there is alpha); the JSON output has a `pictures` list. The format is documented
+  including multi-segment pictures (more than 256 colours) and the 7-bit alpha stream. they are written to
+  `out/pictures/NNN.png` (RGBA where there is alpha); the JSON output has a `pictures` list. The format is documented
   in the comment above `getPictureRecords()`. All pictures of the two TJC test files (88 and 475) decode; Nextion
   files use a different picture encoding and are not decoded.
 
@@ -75,3 +74,22 @@ The HMI source file (and its license) can be found in this repository: https://g
 
 Known limitations: series 4 uses the series 3 instruction set (not verified); Nextion example files still fall back
 to a flat block list instead of per-page output.
+
+## Output layout
+
+`python TFTTool.py -i FILE.tft` writes a tree of small files to `out/` (change it with `-o DIR`; `-o name.json` writes
+the old single json file instead). Pictures are decoded by default (`--no-pictures` to skip), `--raw` also writes the raw
+resource region and usercode.
+
+```
+out/
+  info.json            general info, page index (components and host widget ids per page), file counts
+  headers/             header1.json, header2.json
+  definitions/         definitions.json
+  pages/NNN.json       components of a page: position, events, host events, text
+  variables/NNN.json   decoded variable blocks of a page
+  preinit/NNN.json     code that runs before the first event of a page
+  blocks/NNNN.json     only when pages can't be split (older/Nextion files): flat code block list, 500 per file
+  pictures/            NNN.png and index.json
+  raw/                 resources.bin, usercode.bin (with --raw)
+```

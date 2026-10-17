@@ -909,6 +909,9 @@ class TFTFile:
             f.write(self.getRawUsercode())
 
     def getReadable(self, includeUnknowns=False):
+        return str(self.getReadableData(includeUnknowns))
+
+    def getReadableData(self, includeUnknowns=False):
         d = pdict()
 
         # Info section — rich metadata from both headers
@@ -1083,7 +1086,69 @@ class TFTFile:
                 pages.append(entry)
 
         d["pages"] = pages
-        return str(d)
+        return d
+
+    def writeOutput(self, outdir, includeUnknowns=True, pictures=True, raw=False):
+        """Writes the decoded file as a tree of small json files (and the pictures as PNG) below outdir:
+             info.json                 general info, pictures list
+             headers/                  header1.json, header2.json
+             definitions/              definitions.json (strings of the first usercode block)
+             pages/NNN.json            page components with events, host events and text
+             variables/NNN.json        decoded variable blocks of a page
+             preinit/NNN.json          code blocks that run before the first event of a page
+             blocks/NNNN.json          fallback when the pages can't be split: flat code block list
+             pictures/NNN.png          decoded pictures, pictures/index.json lists them
+             raw/                      resources.bin and usercode.bin (only with raw=True)
+        Returns a dict with counts."""
+        outdir = Path(outdir)
+        data = self.getReadableData(includeUnknowns)
+
+        def dump(path, obj):
+            path = outdir / path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        info = dict(data["info"])
+        pics = data.get("pictures", [])
+        dump("headers/header1.json", data["header1"])
+        dump("headers/header2.json", data["header2"])
+        dump("definitions/definitions.json", data.get("definitions", {}))
+        counts = {"pages": 0, "blocks_files": 0, "pictures": 0}
+        index = []
+        flat = []
+        for pg in data["pages"]:
+            n = pg.get("page")
+            if n is None:
+                flat.append(pg)
+                continue
+            name = f"{n:03d}.json"
+            objs = pg.get("objects", [])
+            dump("pages/" + name, {"page": n, "objects": objs})
+            if pg.get("variables"):
+                dump("variables/" + name, pg["variables"])
+            if pg.get("preinitialize"):
+                dump("preinit/" + name, pg["preinitialize"])
+            index.append({"page": n, "objects": len(objs),
+                          "host_widgets": sorted({he["widget"] for o in objs for he in o.get("host_events", {}).values()
+                                                  if isinstance(he["widget"], int)})})
+            counts["pages"] += 1
+        for k in range(0, len(flat), 500):
+            dump(f"blocks/{k // 500:04d}.json", flat[k:k + 500])
+            counts["blocks_files"] += 1
+        info["pages"] = index
+        info["files"] = {"headers": ["header1.json", "header2.json"], "pages": counts["pages"],
+                         "flat_block_files": counts["blocks_files"], "pictures": len(pics)}
+        dump("info.json", info)
+        if pictures:
+            ok, bad = self.exportPictures(outdir / "pictures")
+            dump("pictures/index.json", pics)
+            counts["pictures"], counts["pictures_failed"] = ok, bad
+        if raw:
+            (outdir / "raw").mkdir(parents=True, exist_ok=True)
+            res_start = self._getVal("ressources_files_address")
+            (outdir / "raw" / "resources.bin").write_bytes(self.raw[res_start:res_start + self._getVal("ressource_files_size")])
+            (outdir / "raw" / "usercode.bin").write_bytes(self.getRawUsercode())
+        return counts
 
     @staticmethod
     def _block_text(blk):
@@ -1372,8 +1437,10 @@ if __name__ == '__main__':
     parser.add_argument("-i", "--input", metavar="TFT_FILE", type=str, required=True,
                         help="Path to the TFT source file")
     parser.add_argument("-o", "--output", metavar="OUTPUT_FILE", type=str, required=False, default="",
-                        help="Optional path to the resulting text or TFT file. If only a folder is specified, the file "
-                             "name is automatically determined based on the input file.")
+                        help="Output directory for the decoded file (default: 'out'); see TFTFile.writeOutput for its "
+                             "layout. If the name ends with .json a single json file is written instead. For "
+                             "conversions (-t): path of the resulting TFT file or a folder; if only a folder is "
+                             "specified, the file name is automatically determined based on the input file.")
     parser.add_argument("-t", "--target", default="TXT",
                         help="Optional parameter to specify a new model. No text file will be created but rather "
                              "a new TFT file according to the specified model. If no output file/folder is specified, "
@@ -1404,9 +1471,10 @@ if __name__ == '__main__':
     parser.add_argument("--probe", action="store_true",
                         help="Only print what was detected about the file (model, editor version, header 2 layout and "
                              "XOR key, validation result, section addresses) and exit.")
-    parser.add_argument("--extract", metavar="DIR", default="",
-                        help="Write the raw resource region (bootloader, pictures, fonts) and the raw usercode "
-                             "to DIR as binary files.")
+    parser.add_argument("--no-pictures", action="store_true",
+                        help="Don't decode and write the pictures (they are written by default).")
+    parser.add_argument("--raw", action="store_true",
+                        help="Also write the raw resource region and the raw usercode as binary files to OUT/raw.")
     parser.add_argument("-v", action="store_true",
                         help="Add this flag to write the decoded text to the console. Useless with -t")
 
@@ -1431,31 +1499,28 @@ if __name__ == '__main__':
         for k, v in tft.header2.content.items():
             print(f"  {k:30} {v:#x}")
         sys.exit(0)
-    if args.extract:
-        out = Path(args.extract)
-        out.mkdir(parents=True, exist_ok=True)
-        res_start = tft._getVal("ressources_files_address")
-        (out / "resources.bin").write_bytes(tft.raw[res_start:res_start + tft._getVal("ressource_files_size")])
-        (out / "usercode.bin").write_bytes(tft.getRawUsercode())
-        ok, bad = tft.exportPictures(out / "pictures")
-        print(f"Raw sections written to: {out}; pictures decoded: {ok}, not decodable: {bad}")
-
     args.target = args.target.upper()
     if args.target == "TXT":
-        result = tft.getReadable(includeUnknowns=True)
-        if args.v:
-            print(result)
-        if not outputPath:
-            outputPath = tftPath.with_suffix(".json")
-        if outputPath.is_dir():
-            outputPath /= tftPath.with_suffix(".json").name
-        outputPath.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(outputPath, "w", encoding="utf-8") as f:
-                f.write(result)
-            print(f"Output written to: {outputPath}")
-        except Exception as e:
-            parser.error(f"Can't open output file: {e}")
+        out = outputPath if outputPath else Path("out")
+        if out.suffix.lower() == ".json":
+            out.parent.mkdir(parents=True, exist_ok=True)
+            result = tft.getReadable(includeUnknowns=True)
+            if args.v:
+                print(result)
+            out.write_text(result, encoding="utf-8")
+            print(f"Output written to: {out}")
+        else:
+            counts = tft.writeOutput(out, includeUnknowns=True, pictures=not args.no_pictures, raw=args.raw)
+            if args.v:
+                print(tft.getReadable(includeUnknowns=True))
+            msg = f"Output written to: {out}/ ({counts['pages']} pages"
+            if counts["blocks_files"]:
+                msg += f", {counts['blocks_files']} flat block files"
+            if not args.no_pictures:
+                msg += f", {counts['pictures']} pictures"
+                if counts.get("pictures_failed"):
+                    msg += f" ({counts['pictures_failed']} not decodable)"
+            print(msg + ")")
     elif args.target == "LIST":
         def s(model):
             # Returns an ascending number to sort models by series, resolution, then size

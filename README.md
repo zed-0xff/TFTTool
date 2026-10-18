@@ -95,7 +95,8 @@ resource region, the usercode and each resource slot.
 out/
   info.json            general info, page index (components and host widget ids per page), resources, checksums, errors
   headers/             header1.json, header2.json
-  definitions/         definitions.json (+ global_blocks.json)
+  definitions/         global.nasm: the global data image decoded (series 4: variables, objects with a struct in the image,
+                       page name hash table, the rest as hexdump without the zero lines) and the start-up code
   pages/NNN.nasm       a page: a comment per component (geometry, decoded attributes, text, host event) followed by its event
                        code as a listing: one statement per line, jump targets as `lbl_<address>:` labels,
                        variables as `local_1ab3` / `global_14`, assignments as `a = b` (the .json files keep `local:0x1ab3`)
@@ -123,7 +124,7 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 
 ### Known gaps
 
-* Series 3 / 4 operator tables (nxt-1.65.1 series 3, tjc-1.65.5 series 4; both use the same numbering): the size-8 list is the old series 3 list with `doevents` at 48, the size-4 list has only 9 named operators (`i cle vis page fill repo wepo ref covx`), verified against the event source of Gaggiuino_35's NX4827P043 `.HMI` files and QIDI's `.HMI`, and the context in the Sovol file (see `_derive_xseries`); every other size-4 operator decodes as `op:4:<number>`. 97% of the command words in QIDI's source and 81% in Gaggiuino's are found in the decoded code (`tests/test_commands.py`).
+* Operator tables: verified for series 3 / 4 (`_derive_xseries`, editors 1.65.x - 1.67.x; only 10 size-4 operators are named, the other size-4 operators decode as `op:4:<number>`) and for TJC 1.67.4 series 0 / 1 / 100 (`_derive_tjc_1_67_4`). Checked against the event source of the `.HMI` files of Gaggiuino_35, QIDI (Plus3, Plus4, Q1), powadcr and klipmi (`tests/test_commands.py`): 99.9-100% of the source's command words are found in the decoded code; the decoded code has more (compiler generated `ref`, `doevents`, drawing commands).
 * `gmov` animations are not decoded.
 * Component attributes other than id, geometry and text are only decoded for text and button objects of series 4 files (see below).
 * Nextion T0/K0 files are only tested with the two sample files.
@@ -161,3 +162,40 @@ with address A is at offset A + 40 there, text pointers too. Pages (sta, pic), c
 the decoded fields are printed as comment lines and only the bytes that are neither decoded nor zero are dumped (all bytes with `--hex`).
 Other attributes (bco and font of buttons, ...) and other component types are not decoded yet; most of them don't vary in
 the QIDI sources, so their position can't be found by comparison.
+
+### Global data image (series 4)
+The first usercode block is the global data image. An address `A` of the code is at offset `A + 40` (the first 40 bytes are a
+header: sizes and positions of the page name hash table and of a second table). `definitions/global.nasm` lists the global
+variables the code uses (`global_14` is the language, `global_2c` the brightness, with their initial values), every object whose
+struct lives in the image (ids of 256 and up; the `0x3c` external picture objects show their `path`, e.g. `ram/176.jpg`), the page
+name hash table (hash and page index of every page; the hashes match the names of the page objects) and what is left that is not zero.
+
+## Related projects
+
+Format documentation and tools this work relied on (or was checked against):
+
+* [UNUF/nxt-doc](https://github.com/UNUF/nxt-doc) - `.tft` format, full instruction set, upload protocol; [UNUF/TFTTool](https://github.com/UNUF/TFTTool) is the tool this repository started from.
+* [hagronnestad/nextion-font-editor](https://github.com/hagronnestad/nextion-font-editor) - the `.zi` font format (glyph codec used by `--glyphs`).
+* [stg/nextion_zi_font_tools](https://github.com/stg/nextion_zi_font_tools) - `.zi` reader/writer in C, BMFont converter.
+* [vladtsvetkov880-hub/nextion-hmi-format](https://github.com/vladtsvetkov880-hub/nextion-hmi-format) - the `.HMI` source format (used to get ground truth: attributes and event source of the sample projects).
+* [YXerer668/tjc-usart-hmi-toolchain](https://github.com/YXerer668/tjc-usart-hmi-toolchain) - builds flashable TJC `.tft` files without the editor; confirms the name hash, event pointers and object record layout.
+
+Other forks of TFTTool: [0xD34D](https://github.com/0xD34D/TFTTool), [andrew-harness](https://github.com/andrew-harness/TFTTool),
+[CalDymos](https://github.com/CalDymos/TFTTool), [dd5md](https://github.com/dd5md/TFTTool).
+
+Projects that contain a `.tft` together with its `.HMI` source (ground truth for operators, attributes and names):
+
+* [joBr99/nspanel-lovelace-ui](https://github.com/joBr99/nspanel-lovelace-ui) (Nextion F series, also `nextion2text` dumps),
+  [HASwitchPlate/HASPone](https://github.com/HASwitchPlate/HASPone) (series 0, 1, 100 and TJC),
+  [Photonsters/Gaggiuino_35](https://github.com/Photonsters/Gaggiuino_35) (series 0, 3 and 100),
+  [QIDITECH/QIDI_PLUS3](https://github.com/QIDITECH/QIDI_PLUS3) (series 4),
+  [straga/klipmi](https://github.com/straga/klipmi) (series 4: the OpenQ1 UI of the QIDI Q1 Pro; also a Klipper/Moonraker bridge for TJC and Nextion screens).
+
+Host side libraries (serial protocol only, nothing about the file formats):
+[AlexanderTonn/EasyNextionLibrary](https://github.com/AlexanderTonn/EasyNextionLibrary),
+[jyberg/Enhanced-Nextion-Library](https://github.com/jyberg/Enhanced-Nextion-Library),
+[alambe94/STM32_Nextion](https://github.com/alambe94/STM32_Nextion),
+[CuriousTech/ESP-HVAC](https://github.com/CuriousTech/ESP-HVAC).
+
+Klipper touchscreen UIs: [prestonbrown/helixscreen](https://github.com/prestonbrown/helixscreen) (LVGL, runs on the printer or as a remote
+screen via Moonraker; no Nextion support, an alternative to KlipperScreen for the Sovol screen project).

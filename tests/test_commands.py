@@ -16,7 +16,11 @@ CASES = [
     (os.path.join(EXT, "Gaggiuino_35", "Nextion_43", "Nextion_43_18MAY2024_0_Deg.tft"),
      os.path.join(EXT, "Gaggiuino_35", "Nextion_43", "Nextion_43_18MAY2024.HMI"), 0.75),
     (os.path.join(EXT, "QIDI_PLUS3", "UI", "800_480_PLUS.tft"), os.path.join(EXT, "QIDI_PLUS3", "UI", "800_480_PLUS.HMI"), 0.95),
-]
+    (os.path.join(EXT, "klipmi", "hmi", "openq1", "Q1_UI_mod.tft"), os.path.join(EXT, "klipmi", "hmi", "openq1", "Q1_UI_mod.HMI"), 0.97),
+    (os.path.join(EXT, "qidi-plus4-klipmi", "hmi", "openp4", "xindi_800_480_V1.7.1.tft"),
+     os.path.join(EXT, "qidi-plus4-klipmi", "hmi", "openp4", "xindi_800_480_V1.7.1.HMI"), 0.97),
+] + [(os.path.join(EXT, "powadcr", "HMI", "build", f"TJC4832{m}_011", f"TJC4832{m}_011.tft"),
+      os.path.join(EXT, "powadcr", "HMI", "powadcr_iface.HMI"), 0.97) for m in ("T035", "K035", "T135")]
 OPS = set()
 for _e in N.all_instruction_sets:
     for _m in _e["models"].values():
@@ -34,8 +38,10 @@ def command_words(lines):
     return c
 
 
-@unittest.skipUnless(shutil.which("node") and all(os.path.isfile(a) and os.path.isfile(b) for a, b, _ in CASES),
-                     "needs node, Gaggiuino_35 and QIDI_PLUS3")
+CASES = [c for c in CASES if os.path.isfile(c[0]) and os.path.isfile(c[1])]
+
+
+@unittest.skipUnless(shutil.which("node") and CASES, "needs node and the sample projects with their .HMI source")
 class CommandWords(unittest.TestCase):
     def test_command_words(self):
         for tft_path, hmi_path, minimum in CASES:

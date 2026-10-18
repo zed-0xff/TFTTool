@@ -160,7 +160,7 @@ class Usercode:
                             continue
                         if i not in stringRegions:
                             replaced = True
-                            if b == 0x09:
+                            if b == 0x09 and i + 2 < len(self.raw):     # operator: 09 <number> <size>
                                 localI = i
                                 dataStruct = "BB"
                                 localI += 1
@@ -1392,7 +1392,7 @@ class TFTFile:
         """Writes the decoded file as a tree of small json files (and the pictures as PNG) below outdir:
              info.json                 general info, pictures list
              headers/                  header1.json, header2.json
-             definitions/              definitions.json (strings of the first usercode block)
+             definitions/global.nasm   the global data image (hexdump, strings) and the start-up code of the project
              pages/NNN.nasm            the page: a comment per component (geometry, attributes, text, host event) and its event code
              init/NNN.nasm             init code of a page as an assembler style listing (address, bytes, statement)
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
@@ -1430,11 +1430,24 @@ class TFTFile:
         pics = data.get("pictures", [])
         dump("headers/header1.json", data["header1"])
         dump("headers/header2.json", data["header2"])
-        dump("definitions/definitions.json", data.get("definitions", {}))
-        if data.get("global_blocks"):
-            dump("definitions/global_blocks.json", data["global_blocks"])
-        counts = {"pages": 0, "blocks_files": 0, "pictures": 0}
         parsed = guard("objects", self._parse_objects)
+        series4 = self._getVal("model_series") == 4
+        gl = ["; global data image and start-up code", ""]
+        strings = data.get("definitions", {}).get("strings", [])
+        if strings:
+            gl.append(f"; {len(strings)} strings in the global data image (offset: text)")
+            gl += [f";   {st['offset']}: {self._quoted(st['value'])}" for st in strings]
+            gl.append("")
+        gl_blocks = data.get("global_blocks") or []
+        if series4 and gl_blocks and gl_blocks[0].get("hex"):
+            gimg = bytes.fromhex(gl_blocks[0]["hex"])
+            gl += guard("global image", lambda: self._globalImageLines(gimg, data["pages"], parsed), [])
+            gl_blocks = gl_blocks[1:]
+        if gl_blocks:
+            gl.append(self.asmListing(gl_blocks, None, hexListing))
+        if len(gl) > 2:
+            write_text("definitions/global.nasm", "\n".join(gl))
+        counts = {"pages": 0, "blocks_files": 0, "pictures": 0}
         sizes = {}
         by_type = collections.defaultdict(collections.Counter)
         for objs in parsed or []:       # struct size of a type = distance to the next object's memory address
@@ -1443,14 +1456,9 @@ class TFTFile:
                     by_type[a["_type_code"]][b["_mem"] - a["_mem"]] += 1
         for code, c in by_type.items():
             sizes[code] = c.most_common(1)[0][0]
-        series4 = self._getVal("model_series") == 4
 
         def describe(o, st, blob, base):
-            attrs = self._structAttributes(o["code"], st, blob, base) if series4 else None
-            covered = self._structCovered(o["code"], st, o["mem"]) if series4 else []
-            if attrs is None:       # layout fields are only decoded when the struct passes the validity checks
-                covered = [c for c in covered if c[0] == 0]
-            return (self._structHeader(o, st) if series4 else None), attrs, covered
+            return self._describeStruct(o, st, blob, base) if series4 else (None, None, [])
 
         index = []
         flat = []
@@ -1486,7 +1494,11 @@ class TFTFile:
                         for k, o in enumerate(parsed[n] if parsed and n < len(parsed) else [])]
                 pname = next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None)
                 write_text("init/" + name.replace(".json", ".nasm"),
-                           self.asmListing(pg["init"], f"page {n}{' ' + repr(pname) if pname else ''} init code",
+                           self.asmListing([e for e in pg["init"] if self._isDataEntry(e)] if pg.get("objects") and
+                                           any(o.get("events", {}).get("load") for o in objs) else pg["init"],
+                                           f"page {n}{' ' + repr(pname) if pname else ''} init data (the load code is in "
+                                           f"pages/{n:03d}.nasm)" if any(o.get("events", {}).get("load") for o in objs)
+                                           else f"page {n}{' ' + repr(pname) if pname else ''} init code",
                                            hexListing, meta, sizes, describe))
             index.append({"page": n, "name": next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None),
                           "objects": len(objs),
@@ -1783,6 +1795,12 @@ class TFTFile:
         return recs
 
     @staticmethod
+    def _isDataEntry(e):
+        """True for a decoded code block entry that is data (undecoded or with control characters), not statements."""
+        text = e["content"] if isinstance(e["content"], str) else ""
+        return text.startswith("RAW_DATA:") or any(ord(c) < 0x20 and c not in "\t\n" for c in text)
+
+    @staticmethod
     def _formatAttrs(attrs):
         """`k=v, ...` for the decoded attributes of an object (colours in hex)."""
         return ", ".join(
@@ -1795,14 +1813,153 @@ class TFTFile:
         return '"' + v.replace("\n", "\\n") + '"' if isinstance(v, str) else json.dumps(v)
 
     @staticmethod
-    def _dumpLines(raw, addr):
-        """Hex dump as comment lines, 16 bytes per line."""
+    def _dumpLines(raw, addr, skipZero=False):
+        """Hex dump as comment lines, 16 bytes per line. With skipZero lines that are all zero are left out (a line
+        `; ...` marks the gap)."""
         lines = []
+        gap = False
         for i in range(0, len(raw), 16):
             row = raw[i:i + 16]
+            if skipZero and not any(row):
+                if not gap:
+                    lines.append("; ...")
+                gap = True
+                continue
+            gap = False
             asc = "".join(chr(c) if 0x20 <= c < 0x7f else "." for c in row)
             lines.append(f"; {addr + i:06x}:  {' '.join(f'{c:02x}' for c in row):<47}  |{asc}|")
         return lines
+
+    def _globalImageLines(self, gimg, pages, parsed):
+        """Listing of the global data image (first usercode block) of a series 4 file. An address A of the code is at
+        offset A + 40 of the image; the first 40 bytes are a header. Parts: the global variables, the structs of the
+        objects with ids >= 256, the page name hash table (<hash u32><page index u16> sorted by hash, its position and
+        size are in the header) and whatever else is not zero."""
+        lines = []
+        covered = [(0, 40)]
+        hdr = struct.unpack_from("<10I", gimg, 0)
+        table_off, table_end = hdr[4] + 40, hdr[7] + 0  # address of the page table and of the next table
+        lines += ["; header (40 bytes): " + " ".join(f"0x{v:x}" for v in hdr[:9]), ""]
+        # global variables: the addresses used by the code as global:0x..
+        refs = collections.Counter()
+        for _, blk in sorted(self.usercode.blocks.items()):
+            if isinstance(blk.decoded, str):
+                for m in re.finditer(r"global:0x([0-9a-f]+)", blk.decoded):
+                    refs[int(m.group(1), 16)] += 1
+        gvars = sorted(a for a in refs if a % 4 == 0 and a < 0x100 and a + 44 <= len(gimg))
+        if gvars:
+            lines.append("; global variables (address: initial value, number of uses in the code)")
+            for a in gvars:
+                v = struct.unpack_from("<i", gimg, a + 40)[0]
+                lines.append(f";   global_{a:x}: {v}  ({refs[a]} uses)")
+                covered.append((a + 40, a + 44))
+            lines.append("")
+        # objects with a struct in the image
+        found = []
+        for pn, plist in enumerate(parsed or []):
+            for k, o in enumerate(plist):
+                st0 = o["_mem"] + 40
+                if st0 + 44 <= len(gimg) and gimg[st0] == o["_type_code"] and gimg[st0 + 1] | (gimg[st0 + 2] << 8) == o["id"] \
+                        and struct.unpack_from("<I", gimg, st0 + 28)[0] == o["_mem"]:
+                    po = pages[pn]["objects"][k] if pn < len(pages) and k < len(pages[pn]["objects"]) else {}
+                    found.append((o["_mem"], pn, o, po))
+        found.sort(key=lambda x: x[0])
+        if found:
+            lines.append("; objects with a struct in the image (image offset = address + 40)")
+        for i, (mem, pn, o, po) in enumerate(found):
+            size = self._structLayouts.get(o["_type_code"], (0,))[0]
+            if not size:
+                nxt = found[i + 1][0] if i + 1 < len(found) else mem + 84
+                size = min(max(nxt - mem, 0), 160)
+            st0 = mem + 40
+            st = gimg[st0:st0 + size]
+            od = {"type": o["type"], "id": o["id"], "mem": mem, "code": o["_type_code"]}
+            header, attrs, cov = self._describeStruct(od, st, gimg, -40)
+            lines += ["", f"; object at 0x{mem:x}: {o['type']} id {o['id']}{' ' + repr(po['name']) if po.get('name') else ''}"
+                          f" (page {pn}), {size} bytes"]
+            lines += self._structLines(st, st0, header, attrs, cov, False)
+            covered.append((st0, st0 + size))
+            layout = self._structLayouts.get(o["_type_code"])
+            if layout and attrs:
+                for key in ("txt", "path"):
+                    if key in attrs:
+                        toff = next(off for name, off, _ in layout[1] if name == key)
+                        tpos = struct.unpack_from("<I", st, toff)[0] + 40
+                        covered.append((tpos, tpos + (attrs.get("txt_maxl", len(attrs[key].encode())) + 1)))
+        if found:
+            lines.append("")
+        # page name hash table
+        if 40 <= table_off and table_off + 6 * 1 <= len(gimg) and hdr[6] % 6 == 0:
+            n = hdr[6] // 6
+            names = {}
+            for pn, pg in enumerate(pages):
+                nm = next((o.get("name") for o in pg["objects"] if o.get("type") == "page" and o.get("name")), None)
+                if nm:
+                    names[pn] = nm
+            ents = [(struct.unpack_from("<I", gimg, table_off + 6 * i)[0], struct.unpack_from("<H", gimg, table_off + 6 * i + 4)[0])
+                    for i in range(n)]
+            covered.append((table_off, table_off + 6 * n))
+            lines.append(f"; page name hash table, {n} pages (page index: name hash, name)")
+            for h, pn in sorted(ents, key=lambda e: e[1]):
+                lines.append(f";   {pn}: 0x{h:08x}{' ' + repr(names[pn]) if pn in names else ''}")
+            lines.append("")
+        if hdr[8] and hdr[7] + hdr[8] <= len(gimg):
+            lines += [f"; second table, {hdr[8]} bytes at image offset 0x{hdr[7]:x}: 32-bit hashes (meaning not known)"]
+            lines += self._dumpLines(gimg[hdr[7]:hdr[7] + hdr[8]], hdr[7]) + [""]
+            covered.append((hdr[7], hdr[7] + hdr[8]))
+        # everything else that is not zero
+        mask = bytearray(len(gimg))
+        for c0, c1 in covered:
+            mask[max(c0, 0):max(c1, 0)] = b"\1" * (max(min(c1, len(gimg)) - max(c0, 0), 0))
+        rest, k = [], 0
+        while k < len(gimg):
+            if mask[k]:
+                k += 1
+                continue
+            j = k
+            while j < len(gimg) and not mask[j]:
+                j += 1
+            if any(gimg[k:j]):
+                rest += self._dumpLines(gimg[k:j], k, skipZero=True)
+            k = j
+        if rest:
+            lines += ["; other data of the image (image offsets; the addresses of the code are offset - 40)"] + rest + [""]
+        return lines
+
+    @staticmethod
+    def _structLines(st, addr, header, attrs, covered, showHex):
+        """Comment lines for one object struct: the header line, the attributes and the bytes that are neither decoded
+        (covered ranges) nor zero; all bytes with showHex."""
+        lines = []
+        if header:
+            lines.append("; " + header)
+        if attrs:
+            lines.append("; " + TFTFile._formatAttrs(attrs))
+        if showHex or not covered:
+            return lines + TFTFile._dumpLines(st, addr)
+        mask = bytearray(len(st))
+        for c0, c1 in covered:
+            mask[c0:c1] = b"\1" * (min(c1, len(st)) - c0)
+        k = 0
+        while k < len(st):
+            if mask[k]:
+                k += 1
+                continue
+            j = k
+            while j < len(st) and not mask[j]:
+                j += 1
+            if any(st[k:j]):            # runs of zero bytes carry no information
+                lines += TFTFile._dumpLines(st[k:j], addr + k)
+            k = j
+        return lines
+
+    def _describeStruct(self, o, st, blob, base):
+        """(header line, attributes, decoded byte ranges) of an object struct, see _objectBlocks."""
+        attrs = self._structAttributes(o["code"], st, blob, base)
+        covered = self._structCovered(o["code"], st, o["mem"])
+        if attrs is None:       # layout fields are only decoded when the struct passes the validity checks
+            covered = [c for c in covered if c[0] == 0]
+        return self._structHeader(o, st), attrs, covered
 
     @staticmethod
     def _objectBlocks(raw, addr, objects, structSizes, describe=None, showHex=False):
@@ -1836,27 +1993,7 @@ class TFTFile:
             st = raw[start:start + size]
             lines += ["", f"; object {i}: {o['type']} id {o['id']}{' ' + repr(o['name']) if o.get('name') else ''} @0x{o['mem']:x}, {size} bytes"]
             header, attrs, covered = describe(o, st, raw, base) if describe else (None, None, [])
-            if header:
-                lines.append("; " + header)
-            if attrs:
-                lines.append("; " + TFTFile._formatAttrs(attrs))
-            if showHex or not covered:
-                lines += TFTFile._dumpLines(st, addr + start)
-            else:
-                mask = bytearray(size)
-                for c0, c1 in covered:
-                    mask[c0:c1] = b"\1" * (min(c1, size) - c0)
-                k = 0
-                while k < size:
-                    if mask[k]:
-                        k += 1
-                        continue
-                    j = k
-                    while j < size and not mask[j]:
-                        j += 1
-                    if any(st[k:j]):            # runs of zero bytes carry no information
-                        lines += TFTFile._dumpLines(st[k:j], addr + start + k)
-                    k = j
+            lines += TFTFile._structLines(st, addr + start, header, attrs, covered, showHex)
             end_of_structs = start + size
         tail = raw[end_of_structs:].rstrip(b"\0")          # trailing zero bytes are padding
         if tail:
@@ -1944,7 +2081,7 @@ class TFTFile:
                     lines += split
                 else:
                     lines.append(f".data  ; {len(raw)} bytes")
-                    lines += TFTFile._dumpLines(raw, addr)
+                    lines += TFTFile._dumpLines(raw, addr, skipZero=not withHex)
                 lines.append("")
             elif withHex:
                 parts = [raw[i:i + 8] for i in range(0, len(raw), 8)] or [b""]
@@ -1990,6 +2127,7 @@ class TFTFile:
         0x79: (64, (("sta", 60, 2), ("pic", 62, 2))),
         0x71: (64, (("picc", 56, 2),)),
         0x02: (104, (("vid", 56, 2), ("en", 58, 1))),
+        0x3c: (64, (("path", 60, 4),)),     # external picture: the path of the file, e.g. ram/176.jpg
     }
     _structHeaderSize = 52
 
@@ -1999,11 +2137,11 @@ class TFTFile:
         layout = cls._structLayouts.get(code)
         if not layout or len(st) < layout[0]:
             return None
-        attrs, ptr = {}, None
+        attrs, ptr, ptr_name = {}, None, "txt"
         for name, off, size in layout[1]:
             v = int.from_bytes(st[off:off + size], "little")
-            if name == "txt":
-                ptr = v
+            if name in ("txt", "path"):
+                ptr, ptr_name = v, name
             else:
                 attrs[name] = v
         if code in (0x74, 0x62):
@@ -2015,7 +2153,7 @@ class TFTFile:
             pos = ptr - base
             if 0 <= pos < len(blob):
                 end = blob.find(b"\0", pos)
-                attrs["txt"] = blob[pos:end if end >= 0 else len(blob)].decode("utf-8", "replace")
+                attrs[ptr_name] = blob[pos:end if end >= 0 else len(blob)].decode("utf-8", "replace")
         return attrs
 
     @classmethod
@@ -2127,6 +2265,11 @@ class TFTFile:
                         continue
                 init.append(entry(addr, blk, text))
 
+            if init and obj_list and obj_list[0]["_type_code"] == 0x79:
+                # the statements of the init part of a page are its load code (codesload / codesunload of the .HMI)
+                code = [e for e in init if not self._isDataEntry(e)]
+                if code:
+                    obj_events.setdefault(0, {})["load"] = code
             struct_attrs = {}
             if self._getVal("model_series") == 4 and init:
                 try:

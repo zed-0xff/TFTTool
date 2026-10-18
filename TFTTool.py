@@ -53,6 +53,8 @@ class Usercode:
             self._decode(hexVals)
 
         _compareOps = {1: "==", 2: "<", 3: ">", 4: "<=", 5: ">=", 6: "!="}
+        # `i` jumps when the comparison is false, so it is shown as the opposite condition followed by the jump
+        _jumpConditions = {1: "!=", 2: ">=", 3: "<=", 4: ">", 5: "<", 6: "=="}
 
         def _decode(self, hexVals=True):
             self._decode_raw(hexVals)
@@ -75,7 +77,7 @@ class Usercode:
                         cut = i
                 if cut >= 0:
                     a, b = args[:cut], args[cut + 1:]
-                    self.decoded = f"if {a}{self._compareOps[int(m.group(2))]}{b} else jump {m.group(3)}"
+                    self.decoded = f"if {a}{self._jumpConditions[int(m.group(2))]}{b} then jump {m.group(3)}"
 
         def _decode_raw(self, hexVals=True):
             if not self.raw:
@@ -1392,9 +1394,9 @@ class TFTFile:
              headers/                  header1.json, header2.json
              definitions/              definitions.json (strings of the first usercode block)
              pages/NNN.json            page components with events, host events and text
-             pages/NNN.asm             the event code of the page as a listing
+             pages/NNN.nasm            the event code of the page as a listing
              names/NNN.json            component id -> CRC hash of its name (per page)
-             init/NNN.asm              init code of a page as an assembler style listing (address, bytes, statement)
+             init/NNN.nasm             init code of a page as an assembler style listing (address, bytes, statement)
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
              pictures/NNN.png          decoded pictures, pictures/index.json lists them
              fonts/index.json          font headers (name, height, encoding, data location, ASCII glyph tables)
@@ -1434,6 +1436,24 @@ class TFTFile:
         if data.get("global_blocks"):
             dump("definitions/global_blocks.json", data["global_blocks"])
         counts = {"pages": 0, "blocks_files": 0, "pictures": 0}
+        parsed = guard("objects", self._parse_objects)
+        sizes = {}
+        by_type = collections.defaultdict(collections.Counter)
+        for objs in parsed or []:       # struct size of a type = distance to the next object's memory address
+            for a, b in zip(objs, objs[1:]):
+                if 0 < b["_mem"] - a["_mem"] <= 1024:
+                    by_type[a["_type_code"]][b["_mem"] - a["_mem"]] += 1
+        for code, c in by_type.items():
+            sizes[code] = c.most_common(1)[0][0]
+        series4 = self._getVal("model_series") == 4
+
+        def describe(o, st, blob, base):
+            attrs = self._structAttributes(o["code"], st, blob, base) if series4 else None
+            covered = self._structCovered(o["code"], st, o["mem"]) if series4 else []
+            if attrs is None:       # layout fields are only decoded when the struct passes the validity checks
+                covered = [c for c in covered if c[0] == 0]
+            return (self._structHeader(o, st) if series4 else None), attrs, covered
+
         index = []
         flat = []
         for pg in data["pages"]:
@@ -1447,14 +1467,21 @@ class TFTFile:
             listing = []
             for o in objs:
                 for ename, blks in o.get("events", {}).items():
-                    listing.append(self.asmListing(blks, f"object id {o['id']} ({o['type']}): {ename}", hexListing))
+                    listing.append(self.asmListing(blks, f"object id {o['id']} ({o['type']}{' ' + repr(o['name']) if o.get('name') else ''}): {ename}", hexListing))
             if listing:
-                write_text("pages/" + name.replace(".json", ".asm"), f"; page {n} event code\n\n" + "\n".join(listing))
+                write_text("pages/" + name.replace(".json", ".nasm"), f"; page {n} event code\n\n" + "\n".join(listing))
             if pg.get("name_hashes"):
                 dump("names/" + name, pg["name_hashes"])
             if pg.get("init"):
-                write_text("init/" + name.replace(".json", ".asm"), self.asmListing(pg["init"], f"page {n} init code", hexListing))
-            index.append({"page": n, "objects": len(objs),
+                meta = [{"type": o["type"], "id": o["id"], "mem": o["_mem"], "code": o["_type_code"],
+                         "name": (objs[k].get("name") if k < len(objs) else None)}
+                        for k, o in enumerate(parsed[n] if parsed and n < len(parsed) else [])]
+                pname = next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None)
+                write_text("init/" + name.replace(".json", ".nasm"),
+                           self.asmListing(pg["init"], f"page {n}{' ' + repr(pname) if pname else ''} init code",
+                                           hexListing, meta, sizes, describe))
+            index.append({"page": n, "name": next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None),
+                          "objects": len(objs),
                           "host_widgets": sorted({he["widget"] for o in objs for he in o.get("host_events", {}).values()
                                                   if isinstance(he["widget"], int)})})
             counts["pages"] += 1
@@ -1590,6 +1617,7 @@ class TFTFile:
                     slots = struct.unpack_from(f"<{nslots}H", self.raw, off + 56)
                 objects.append({
                     "id": obj_id, "type": type_name, "_type_code": type_code,
+                    "_mem": struct.unpack_from("<I", self.raw, off + 28)[0],
                     "x": x, "y": y, "w": w, "h": h,
                     "_event_ptrs": event_ptrs, "_slots": slots,
                 })
@@ -1747,13 +1775,107 @@ class TFTFile:
         return recs
 
     @staticmethod
-    def asmListing(entries, title=None, withHex=False):
+    def _dumpLines(raw, addr):
+        """Hex dump as comment lines, 16 bytes per line."""
+        lines = []
+        for i in range(0, len(raw), 16):
+            row = raw[i:i + 16]
+            asc = "".join(chr(c) if 0x20 <= c < 0x7f else "." for c in row)
+            lines.append(f"; {addr + i:06x}:  {' '.join(f'{c:02x}' for c in row):<47}  |{asc}|")
+        return lines
+
+    @staticmethod
+    def _objectBlocks(raw, addr, objects, structSizes, describe=None, showHex=False):
+        """Lines for a page init data block that starts with the table of the object memory addresses followed by the
+        object structs (runtime copies of the start of the object records), or None if the block is not of that form.
+        describe(object, struct, block, base) may return (header line, attributes, decoded byte ranges); then only the
+        bytes that are not decoded and not zero are dumped, unless showHex."""
+        n = len(objects)
+        if n == 0 or len(raw) < 4 * n:
+            return None
+        table = struct.unpack_from(f"<{n}I", raw, 0)
+        if list(table) != [o["mem"] for o in objects]:
+            return None
+        base = table[0] - 4 * n
+        lines = [f"; object address table, {n} objects, block loaded at 0x{base:x}"]
+        for i in range(0, n, 8):
+            lines.append(".dd " + ", ".join(f"0x{v:x}" for v in table[i:i + 8]))
+        end_of_structs = len(raw)
+        for i, o in enumerate(objects):
+            start = o["mem"] - base
+            if i + 1 < n:
+                size = objects[i + 1]["mem"] - o["mem"]
+            else:
+                size = (structSizes or {}).get(o["code"], len(raw) - start)
+            size = max(0, min(size, len(raw) - start))
+            st = raw[start:start + size]
+            lines += ["", f"; object {i}: {o['type']} id {o['id']}{' ' + repr(o['name']) if o.get('name') else ''} @0x{o['mem']:x}, {size} bytes"]
+            header, attrs, covered = describe(o, st, raw, base) if describe else (None, None, [])
+            if header:
+                lines.append("; " + header)
+            if attrs:
+                lines.append("; " + ", ".join(
+                    f"{k}={('0x%04x' % v) if k in ('bco', 'pco', 'pco2', 'borderc') else json.dumps(v, ensure_ascii=False)}"
+                    for k, v in attrs.items()))
+            if showHex or not covered:
+                lines += TFTFile._dumpLines(st, addr + start)
+            else:
+                mask = bytearray(size)
+                for c0, c1 in covered:
+                    mask[c0:c1] = b"\1" * (min(c1, size) - c0)
+                k = 0
+                while k < size:
+                    if mask[k]:
+                        k += 1
+                        continue
+                    j = k
+                    while j < size and not mask[j]:
+                        j += 1
+                    if any(st[k:j]):            # runs of zero bytes carry no information
+                        lines += TFTFile._dumpLines(st[k:j], addr + start + k)
+                    k = j
+            end_of_structs = start + size
+        tail = raw[end_of_structs:].rstrip(b"\0")          # trailing zero bytes are padding
+        if tail:
+            dropped = len(raw) - end_of_structs - len(tail)
+            lines += ["", f"; data after the object structs, {len(tail)} bytes"
+                          + (f" ({dropped} trailing zero bytes dropped)" if dropped else "")]
+            lines += TFTFile._dumpLines(tail, addr + end_of_structs)
+        return lines
+
+    @staticmethod
+    def _asmStatement(stmt):
+        """Presentation of one decoded statement: variables local:0x1ab3 / global:0x14 become local_1ab3 / global_14,
+        commas are followed by a space, the comparison operators of conditions and assignments (`a=b`, `a+=b`) get spaces
+        around the operator. Text inside string literals is left alone."""
+        parts = re.split(r'("(?:\\.|[^"\\])*")', stmt)       # odd entries are string literals
+        out = []
+        for i, p in enumerate(parts):
+            if i % 2:
+                out.append(p)
+                continue
+            p = re.sub(r"\b(local|global):0x([0-9a-fA-F]+)", r"\1_\2", p)
+            p = re.sub(r",(?=\S)", ", ", p)
+            if stmt.startswith("if "):
+                p = re.sub(r"\s*(==|!=|<=|>=|<|>)\s*", r" \1 ", p)
+            out.append(p)
+        masked = "".join("\0" * len(p) if i % 2 else p for i, p in enumerate(out))
+        text = "".join(out)
+        m = re.match(r"([A-Za-z_][\w.]*)((?:<<|>>|[-+*/%&|^])?)=(?!=)", masked)
+        if m and not masked.startswith("if "):
+            text = f"{text[:m.end(1)]} {m.group(2)}= {text[m.end():]}"
+        return text
+
+    @staticmethod
+    def asmListing(entries, title=None, withHex=False, objects=None, structSizes=None, describe=None):
         """Assembler style listing of decoded code blocks (entries with offset, size, hex and content).
-        Statements are printed indented, one per line. Jumps (`jmp N`, `else jump N`; the distance counts from the start of
+        Statements are printed indented, one per line. Jumps (`jmp N`, `then jump N`; the distance counts from the start of
         the next block, which has a 4 byte size field) refer to labels `lbl_<address>` that are printed before the target
         statement. With withHex every statement is preceded by its address and bytes (8 per line). Blocks that could
-        not be decoded or are data (control characters) are always printed as `.data` with an address and a hex dump."""
-        jump = re.compile(r"(^jmp |else jump )(0x[0-9a-f]+|\d+)$")
+        not be decoded or are data (control characters) are always printed as `.data` followed by a hex dump in comment
+        lines (16 bytes per line). With objects (the page's objects with their memory addresses, see _parse_objects) a data
+        block that starts with the page's object address table is split, see _objectBlocks."""
+        jump = re.compile(r"(^jmp |then jump )(0x[0-9a-f]+|\d+)$")
         rows = []                      # (address, kind, text, raw)
         targets = set()
         for e in entries:
@@ -1769,7 +1891,7 @@ class TFTFile:
             if raw and (text.startswith("RAW_DATA:") or any(ord(c) < 0x20 and c not in "\t\n" for c in text)):
                 rows.append((addr, "data", None, raw))
                 continue
-            stmts = text.split("\n")
+            stmts = [TFTFile._asmStatement(x) for x in text.split("\n")]
             m = jump.search(stmts[0])
             if m:
                 dist = int(m.group(2), 0)
@@ -1788,14 +1910,18 @@ class TFTFile:
                     lines.append("")
                 lines.append(f"lbl_{pending.pop(0):x}:")
 
+        org_done = table_done = False
         for addr, kind, stmts, raw in rows:
             flush(addr)
             if kind == "data":
-                lines.append(f"{addr:06x}:  .data  ; {len(raw)} bytes")
-                for i in range(0, len(raw), 8):
-                    row = raw[i:i + 8]
-                    asc = "".join(chr(c) if 0x20 <= c < 0x7f else "." for c in row)
-                    lines.append(f"{addr + i:06x}:  {' '.join(f'{c:02x}' for c in row):<23}  |{asc}|")
+                split = TFTFile._objectBlocks(raw, addr, objects, structSizes, describe, withHex) \
+                    if objects and not table_done else None
+                table_done = table_done or split is not None
+                if split is not None:
+                    lines += split
+                else:
+                    lines.append(f".data  ; {len(raw)} bytes")
+                    lines += TFTFile._dumpLines(raw, addr)
                 lines.append("")
             elif withHex:
                 parts = [raw[i:i + 8] for i in range(0, len(raw), 8)] or [b""]
@@ -1804,9 +1930,103 @@ class TFTFile:
                     st = stmts[i] if i < len(stmts) else ""
                     lines.append(f"{addr + 8 * i:06x}:  {hx:<23}  {st}".rstrip())
             else:
+                if not org_done and not withHex:
+                    lines.append(f".org 0x{addr:x}")
+                    org_done = True
                 lines += ["    " + st.rstrip() for st in stmts]
         flush(None)
         return "\n".join(lines) + "\n"
+
+    # Component names are stored as a CRC (CRC of the name padded with zero bytes to 14 bytes, see nxt-doc TFT.md), so they
+    # can only be recovered by guessing. Editor defaults (b0, t12, tm0, tc0, ...) and the words below are tried; more words
+    # can be supplied with TFTFile.nameWords (command line: --names FILE, one name per line).
+    _namePrefixes = ("b", "t", "n", "x", "j", "p", "m", "q", "g", "s", "c", "r", "va", "tm", "tc", "h", "ts", "tp", "sw",
+                     "bt", "tx", "pg", "page", "wifi", "file", "tool", "input", "temp")
+    _nameWords = ("logo", "main", "menu", "home", "boot", "start", "print", "printing", "set", "setting", "settings",
+                  "tool", "bed", "move", "fan", "led", "wifi", "lang", "language", "about", "info", "popup", "warn",
+                  "error", "done", "finish", "pause", "resume", "stop", "tune", "temp", "status", "speed", "level",
+                  "zoffset", "calibrate", "filament", "load", "unload", "preheat", "cooldown", "network", "system",
+                  "version", "update", "reset", "confirm", "keyboard", "input", "numpad", "password", "file", "files")
+    nameWords = ()
+
+    # Runtime object structs of series 4 (TJC, e.g. Sovol SV08 Max, QIDI): the init data block of a page starts with the
+    # table of the object addresses, followed by the structs. Fields found by comparing QIDI's 800_480_PLUS.tft with the
+    # attributes of its .HMI source (tests/test_attributes.py repeats the comparison; all fields listed agree in at least
+    # 99% of the objects):
+    #   header (types with a struct of 52 bytes or more): +0 type, +1 id u16, +3 flags, +4 six event pointers, +28 own
+    #           address, +34 aph, +40 x, y (i16), +44 w, h, +48 endx, endy
+    # then per type (name, offset, size): text 84 bytes, button 84 bytes, page 64 bytes, crop 64 bytes, video 104 bytes.
+    # Text: the background field holds bco for sta 1 and the picture id for sta 0 / 2. Page: pic is only valid for sta 2.
+    # The bytes +60 and +68 of buttons are constant in most objects and not named. A text pointer is the position of the
+    # string in the block plus the block's base address.
+    _structLayouts = {
+        0x74: (84, (("sta", 56, 1), ("font", 61, 1), ("background", 62, 2), ("pco", 64, 2), ("xcen", 66, 1),
+                    ("ycen", 67, 1), ("txt_maxl", 70, 2), ("txt", 72, 4), ("isbr", 76, 1))),
+        0x62: (84, (("borderc", 58, 2), ("picc", 62, 2), ("picc2", 64, 2), ("pco", 66, 2), ("xcen", 70, 1),
+                    ("ycen", 71, 1), ("txt_maxl", 74, 2), ("txt", 76, 4), ("isbr", 80, 1))),
+        0x79: (64, (("sta", 60, 2), ("pic", 62, 2))),
+        0x71: (64, (("picc", 56, 2),)),
+        0x02: (104, (("vid", 56, 2), ("en", 58, 1))),
+    }
+    _structHeaderSize = 52
+
+    @classmethod
+    def _structAttributes(cls, code, st, blob, base):
+        """Attributes of a struct of a series 4 file, or None for types that are not decoded (or invalid data)."""
+        layout = cls._structLayouts.get(code)
+        if not layout or len(st) < layout[0]:
+            return None
+        attrs, ptr = {}, None
+        for name, off, size in layout[1]:
+            v = int.from_bytes(st[off:off + size], "little")
+            if name == "txt":
+                ptr = v
+            else:
+                attrs[name] = v
+        if code in (0x74, 0x62):
+            if attrs["xcen"] > 2 or attrs["ycen"] > 2 or attrs["isbr"] > 1 or attrs.get("sta", 0) > 3:
+                return None         # not a struct of this layout
+            if code == 0x74:
+                attrs[{1: "bco", 0: "picc", 2: "pic"}.get(attrs["sta"], "background")] = attrs.pop("background")
+        if ptr is not None:
+            pos = ptr - base
+            if 0 <= pos < len(blob):
+                end = blob.find(b"\0", pos)
+                attrs["txt"] = blob[pos:end if end >= 0 else len(blob)].decode("utf-8", "replace")
+        return attrs
+
+    @classmethod
+    def _structCovered(cls, code, st, mem):
+        """Byte ranges (start, end) of a struct that are decoded: the header and the fields of its layout."""
+        covered = []
+        if len(st) >= cls._structHeaderSize and struct.unpack_from("<I", st, 28)[0] == mem:
+            covered.append((0, cls._structHeaderSize))
+        layout = cls._structLayouts.get(code)
+        if layout and len(st) >= layout[0]:
+            covered += [(off, off + size) for _, off, size in layout[1]]
+        return covered
+
+    def _structHeader(self, o, st):
+        """One line with the header fields of a struct (see above), or None if the struct has no such header."""
+        if len(st) < self._structHeaderSize or struct.unpack_from("<I", st, 28)[0] != o["mem"]:
+            return None
+        x, y, w, h, ex, ey = struct.unpack_from("<hhHHHH", st, 40)
+        events = [f"{self._event_name(o['type'], i)}=0x{p:x}"
+                  for i, p in enumerate(struct.unpack_from("<6I", st, 4)) if p != 0xffffffff]
+        return (f"flags=0x{st[3]:02x}, aph={st[34]}, x={x}, y={y}, w={w}, h={h}, endx={ex}, endy={ey}"
+                + (f", events: {', '.join(events)}" if events else ""))
+
+    def _nameTable(self):
+        """Dictionary hash -> name for the names that can be guessed (see _namePrefixes)."""
+        table = {}
+        crc = lambda name: Checksum().CRC(data=name.encode("latin-1", "replace").ljust(14, b"\0"))
+        for p in self._namePrefixes:
+            for i in range(300):
+                for name in (f"{p}{i}", f"{p}_{i}"):
+                    table[crc(name)] = name
+        for w in tuple(self._nameWords) + tuple(self.nameWords):
+            table[crc(w)] = w
+        return table
 
     def _buildPages(self, blocks, page_objects, texts):
         """Assigns the usercode blocks to pages and the events to components.
@@ -1831,6 +2051,7 @@ class TFTFile:
                 pages.append(entry)
             return pages, []
 
+        name_table = self._nameTable()
         static_end = self._getVal("static_usercode_address") or (blocks[-1][0] + len(blocks[-1][1].raw) + 4 if blocks else 0)
         n = len(table)
         first_event = []
@@ -1883,10 +2104,32 @@ class TFTFile:
                         continue
                 init.append(entry(addr, blk, text))
 
+            struct_attrs = {}
+            if self._getVal("model_series") == 4 and init:
+                try:
+                    blob = bytes.fromhex(init[0]["hex"])
+                    mem = [o["_mem"] for o in obj_list]
+                    if len(blob) >= 4 * len(mem) and list(struct.unpack_from(f"<{len(mem)}I", blob, 0)) == mem:
+                        base = mem[0] - 4 * len(mem)
+                        for i, o in enumerate(obj_list):
+                            size = (mem[i + 1] - mem[i]) if i + 1 < len(mem) else \
+                                self._structLayouts.get(o["_type_code"], (0,))[0]
+                            a = self._structAttributes(o["_type_code"], blob[mem[i] - base:mem[i] - base + size], blob, base)
+                            if a:
+                                struct_attrs[i] = a
+                except Exception:
+                    pass
             clean_objects = []
             for obj_i, obj in enumerate(obj_list):
                 clean_obj = {"id": obj["id"], "type": obj["type"], "x": obj["x"], "y": obj["y"],
                              "w": obj["w"], "h": obj["h"]}
+                if obj_i in struct_attrs:
+                    clean_obj["attributes"] = struct_attrs[obj_i]
+                hv = hashes.get(str(obj["id"] & 0xff))
+                if hv is not None and not isinstance(hv, dict):
+                    nm = name_table.get(int(hv, 0) if isinstance(hv, str) else hv)
+                    if nm:
+                        clean_obj["name"] = nm
                 if (page_num, obj_i) in texts:
                     clean_obj["text"] = {str(k): v for k, v in sorted(texts[(page_num, obj_i)].items())}
                 if obj_i in obj_events:
@@ -2049,8 +2292,10 @@ if __name__ == '__main__':
     parser.add_argument("--probe", action="store_true",
                         help="Only print what was detected about the file (model, editor version, header 2 layout and "
                              "XOR key, validation result, section addresses) and exit.")
+    parser.add_argument("--names", metavar="FILE",
+                        help="word list (one name per line) to try when recovering component names from their hashes")
     parser.add_argument("--hex", action="store_true",
-                        help="print the address and bytes in front of every statement of the .asm listings")
+                        help="print the address and bytes in front of every statement of the .nasm listings")
     parser.add_argument("--no-glyphs", action="store_true", help="do not write the font glyph atlases (fonts/*_atlas.png)")
     parser.add_argument("--no-pictures", action="store_true",
                         help="Don't decode and write the pictures (they are written by default).")
@@ -2069,6 +2314,9 @@ if __name__ == '__main__':
 
     with open(tftPath, "rb") as f:
         tft = TFTFile(f.read(), header2_hint=args.header2, decode_usercode=not args.probe)
+    if args.names:
+        with open(args.names, encoding="utf-8") as nf:
+            tft.nameWords = tuple(w.strip() for w in nf if w.strip())
 
     if args.probe:
         print(f"model:        {tft.model}")

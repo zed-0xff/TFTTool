@@ -1,3 +1,4 @@
+import struct
 import types
 import unittest
 
@@ -75,11 +76,12 @@ class Conditionals(unittest.TestCase):
         return b.decoded
 
     def test_comparison_codes(self):
-        for code, sym in ((1, "=="), (2, "<"), (3, ">"), (4, "<="), (5, ">="), (6, "!=")):
-            self.assertEqual(self.block(f"i usize,1,{code},0x1346"), f"if usize{sym}1 else jump 0x1346")
+        # the jump is taken when the comparison is false, so the opposite condition is shown
+        for code, sym in ((1, "!="), (2, ">="), (3, "<="), (4, ">"), (5, "<"), (6, "==")):
+            self.assertEqual(self.block(f"i usize,1,{code},0x1346"), f"if usize{sym}1 then jump 0x1346")
 
     def test_strings_with_commas(self):
-        self.assertEqual(self.block('i local:0x4253,"a,b",6,0x17'), 'if local:0x4253!="a,b" else jump 0x17')
+        self.assertEqual(self.block('i local:0x4253,"a,b",6,0x17'), 'if local:0x4253=="a,b" then jump 0x17')
 
     def test_other_text_is_untouched(self):
         for text in ("page 0", "i x,1,9,0x5", "RAW_DATA: 00", "prints 0x65,1"):
@@ -92,3 +94,38 @@ class Conditionals(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ObjectBlocks(unittest.TestCase):
+    def test_object_table_is_split(self):
+        # table of two objects (page of 8 bytes, text of 12 bytes) followed by 4 bytes of other data
+        base = 0x1000
+        mem = [base + 8, base + 16]
+        raw = struct.pack("<2I", *mem) + bytes(range(8)) + bytes(range(100, 112)) + b"tail"
+        objects = [{"type": "page", "id": 0, "mem": mem[0], "code": 0x79},
+                   {"type": "text", "id": 1, "mem": mem[1], "code": 0x74}]
+        lines = T.TFTFile._objectBlocks(raw, 0x200, objects, {0x74: 12})
+        self.assertEqual(lines[1], ".dd 0x1008, 0x1010")
+        text = "\n".join(lines)
+        self.assertIn("; object 0: page id 0 @0x1008, 8 bytes", text)
+        self.assertIn("; object 1: text id 1 @0x1010, 12 bytes", text)
+        self.assertIn("; data after the object structs, 4 bytes", text)
+
+    def test_other_blocks_are_not_split(self):
+        objects = [{"type": "page", "id": 0, "mem": 0x1008, "code": 0x79}]
+        self.assertIsNone(T.TFTFile._objectBlocks(b"\x00" * 16, 0, objects, {}))
+
+
+class ComponentNames(unittest.TestCase):
+    def test_name_hash_is_crc_of_name_padded_to_14_bytes(self):
+        # values taken from HASwitchPlate.tft (HASPone) and its .HMI source
+        f = T.TFTFile.__new__(T.TFTFile)
+        table = f._nameTable()
+        for name, h in (("b1", 0xb8756f4e), ("b2", 0x22c442c6), ("b3", 0x54ab59be), ("b4", 0x13670461)):
+            self.assertEqual(table[h], name)
+
+    def test_extra_words(self):
+        f = T.TFTFile.__new__(T.TFTFile)
+        f.nameWords = ("kobold",)
+        h = T.Checksum().CRC(data=b"kobold".ljust(14, b"\0"))
+        self.assertEqual(f._nameTable()[h], "kobold")

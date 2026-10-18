@@ -75,7 +75,7 @@ The HMI source file (and its license) can be found in this repository: https://g
 * **Operators**: the tables of `nxt-1.68.2` and `nxt-1.65.1` (F series) were found by aligning the compiled events of the
   nspanel-lovelace-ui project with the nextion2text output of its source; 13,235 of 13,235 command words of three
   projects decode correctly. Unverified entries show as `op:<size>:<number>`. Conditionals are shown as
-  `if a<b else jump 0x..`. For unknown editor versions or series the closest table is used and a warning is printed.
+  `if a>=b then jump 0x..` (the instruction jumps when the comparison is false, so the opposite condition is shown). For unknown editor versions or series the closest table is used and a warning is printed.
 * **Pictures**: see the format comment above `getPictureRecords()`; `--no-pictures` skips the export.
 * **Fonts**: records and the glyph tables of ASCII fonts (`getFonts()`); the glyph bitmaps are a compressed bit stream
   that is **not decoded**.
@@ -98,9 +98,11 @@ out/
   definitions/         definitions.json (+ global_blocks.json)
   pages/NNN.json       components of a page: position, events, host events, text
   names/NNN.json       component id -> hash of its name
-  pages/NNN.asm        the event code of a page as a listing: one statement per line, jump targets as `lbl_<address>:` labels
-  init/NNN.asm         init code of a page, same listing format; `--hex` adds the address and bytes in front of every
-                       statement, blocks that are data / not decoded are always `.data` with a hex dump
+  pages/NNN.nasm       the event code of a page as a listing: one statement per line, jump targets as `lbl_<address>:` labels,
+                       variables as `local_1ab3` / `global_14`, assignments as `a = b` (the .json files keep `local:0x1ab3`)
+  init/NNN.nasm        init code of a page, same listing format; `--hex` adds the address and bytes in front of every
+                       statement, blocks that are data / not decoded are always `.data` followed by a hex dump in comment lines (16 bytes per line); a page's first
+                       data block is split into the object address table (`.dd`) and one dump per object struct
   blocks/NNNN.json     only when pages can't be split: flat code block list, 500 per file
   pictures/            NNN.png and index.json
   fonts/               index.json (font headers), fontNN_atlas.png/.json (glyph atlases)
@@ -124,7 +126,7 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 
 * Series 4 (TJC, tjc-1.65.5) operator tables: the size-8 list equals series 3 (checked on the 5 operators the Sovol file uses), the size-4 list has only 6 named operators, verified from their use in the Sovol file (see `_derive_tjc_1_65_5_series4`); every other size-4 operator decodes as `op:4:<number>`.
 * `gmov` animations are not decoded.
-* Component attributes other than id, geometry and text (font, colours, ...) are not decoded.
+* Component attributes other than id, geometry and text are only decoded for text and button objects of series 4 files (see below).
 * Nextion T0/K0 files are only tested with the two sample files.
 
 ### Glyph bitmaps
@@ -141,3 +143,21 @@ The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/font
   which verifies the `.tft` checksums with this tool before writing it with `whmi-wri`). Run with `--help`.
 * `sovol/widget_map.py`: joins the decoded Sovol `.tft` with the host handlers of the stock client source (`ui.h` / `ui.cpp`,
   not included) into a page-to-widget map; the result for the stock firmware is `sovol/widget_map.md`.
+
+### Component names
+The names of components and pages are stored only as hashes (CRC of the name padded with zero bytes to 14 bytes, see nxt-doc
+`TFT.md`; `names/NNN.json`). The tool guesses them: editor defaults (`b0`, `t12`, `tm0`, `tc0`, ...) and a short word list, and
+adds `name` to the objects of `pages/NNN.json`, to the page index in `info.json` and to the listings. `--names FILE` adds your
+own word list (one name per line). On the Sovol file 636 of 740 components and 11 of 67 pages get a name.
+
+### Component attributes (series 4)
+For series 4 files (TJC, e.g. Sovol SV08 Max, QIDI) the init data block of a page is a table of the object addresses followed
+by the runtime structs of the objects (`+28` of an object record is its address). For text and button objects the fields
+were found by comparing QIDI's `800_480_PLUS.tft` with its `.HMI` source (`tests/test_attributes.py` repeats the comparison);
+`TFTFile._structAttributes` lists the offsets. They are added as `attributes` to the objects of `pages/NNN.json` and printed
+above each object dump in `init/NNN.nasm`: sta, font, background (bco / picc / pic depending on sta), pco, xcen, ycen,
+txt_maxl, isbr and the text itself for text objects; borderc, picc, picc2, pco, xcen, ycen, txt_maxl, isbr and text for buttons.
+Pages (sta, pic), crop (picc) and video (vid, en) objects have a few fields too. In `init/NNN.nasm` an object's header and
+the decoded fields are printed as comment lines and only the bytes that are neither decoded nor zero are dumped (all bytes with `--hex`).
+Other attributes (bco and font of buttons, ...) and other component types are not decoded yet; most of them don't vary in
+the QIDI sources, so their position can't be found by comparison.

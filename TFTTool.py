@@ -1394,7 +1394,6 @@ class TFTFile:
              headers/                  header1.json, header2.json
              definitions/global.nasm   the global data image (hexdump, strings) and the start-up code of the project
              pages/NNN.nasm            the page: a comment per component (geometry, attributes, text, host event) and its event code
-             init/NNN.nasm             init code of a page as an assembler style listing (address, bytes, statement)
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
              pictures/NNN.png          decoded pictures, pictures/index.json lists them
              fonts/index.json          font headers (name, height, encoding, data location, ASCII glyph tables)
@@ -1470,36 +1469,48 @@ class TFTFile:
             name = f"{n:03d}.json"
             objs = pg.get("objects", [])
             pname = next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None)
-            listing = [f"; page {n}{' ' + repr(pname) if pname else ''}: {len(objs)} objects and their event code\n"]
-            for o in objs:
+            # the init part of the page: the object address table and the object structs, merged into the objects below
+            parts = {}
+            data_entries = [e for e in pg.get("init", []) if self._isDataEntry(e)]
+            if series4 and data_entries and data_entries[0].get("hex") and parsed and n < len(parsed):
+                meta = [{"type": o["type"], "id": o["id"], "mem": o["_mem"], "code": o["_type_code"],
+                         "name": (objs[k].get("name") if k < len(objs) else None)} for k, o in enumerate(parsed[n])]
+                first = data_entries[0]
+                self._objectBlocks(bytes.fromhex(first["hex"]), int(first["offset"], 16), meta, sizes,
+                                   lambda o, st, blob, base: self._describeStruct(o, st, blob, base, False),
+                                   hexListing, parts)
+            listing = [f"; page {n}{' ' + repr(pname) if pname else ''}: {len(objs)} objects\n"]
+            if parts.get("table"):
+                listing.append("\n".join(parts["table"]) + "\n")
+            for k, o in enumerate(objs):
                 oname = ' ' + repr(o["name"]) if o.get("name") else ""
                 hv = (pg.get("name_hashes") or {}).get(str(o["id"] & 0xff))
                 head = [f"; object id {o['id']} ({o['type']}{oname}): x={o['x']}, y={o['y']}, w={o['w']}, h={o['h']}"
                         + (f", name hash={hv}" if isinstance(hv, str) else "")]
+                part = parts.get(k) or {}
+                if part.get("header"):
+                    head.append("; " + part["header"])
                 if o.get("attributes"):
                     head.append("; " + self._formatAttrs(o["attributes"]))
                 if o.get("text"):
                     head.append("; text:")
-                    head += [f";   {k}: {self._quoted(v)}" for k, v in o["text"].items()]
+                    head += [f";   {k2}: {self._quoted(v)}" for k2, v in o["text"].items()]
                 for ename, he in o.get("host_events", {}).items():
                     head.append(f"; {ename} reports to the host: page {he['page']}, widget {he['widget']}")
+                head += part.get("dump", [])
                 block = ["\n".join(head) + "\n"]
                 for ename, blks in o.get("events", {}).items():
                     block.append(self.asmListing(blks, ename, hexListing))
                 listing.append("\n".join(block))
+            if parts.get("tail"):
+                listing.append("\n".join(parts["tail"]) + "\n")
+            if pg.get("init") and not parts.get("table"):       # no object table found: the init part as it is
+                listing.append(self.asmListing(pg["init"], "init part of the page", hexListing))
+            elif pg.get("init") and not any(o.get("events", {}).get("load") for o in objs):
+                code = [e for e in pg["init"] if not self._isDataEntry(e)]
+                if code:                                        # statements that could not be given to the page object
+                    listing.append(self.asmListing(code, "init code of the page", hexListing))
             write_text("pages/" + name.replace(".json", ".nasm"), "\n".join(listing))
-            if pg.get("init"):
-                meta = [{"type": o["type"], "id": o["id"], "mem": o["_mem"], "code": o["_type_code"],
-                         "name": (objs[k].get("name") if k < len(objs) else None)}
-                        for k, o in enumerate(parsed[n] if parsed and n < len(parsed) else [])]
-                pname = next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None)
-                write_text("init/" + name.replace(".json", ".nasm"),
-                           self.asmListing([e for e in pg["init"] if self._isDataEntry(e)] if pg.get("objects") and
-                                           any(o.get("events", {}).get("load") for o in objs) else pg["init"],
-                                           f"page {n}{' ' + repr(pname) if pname else ''} init data (the load code is in "
-                                           f"pages/{n:03d}.nasm)" if any(o.get("events", {}).get("load") for o in objs)
-                                           else f"page {n}{' ' + repr(pname) if pname else ''} init code",
-                                           hexListing, meta, sizes, describe))
             index.append({"page": n, "name": next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None),
                           "objects": len(objs),
                           "host_widgets": sorted({he["widget"] for o in objs for he in o.get("host_events", {}).values()
@@ -1927,16 +1938,12 @@ class TFTFile:
         return lines
 
     @staticmethod
-    def _structLines(st, addr, header, attrs, covered, showHex):
-        """Comment lines for one object struct: the header line, the attributes and the bytes that are neither decoded
-        (covered ranges) nor zero; all bytes with showHex."""
-        lines = []
-        if header:
-            lines.append("; " + header)
-        if attrs:
-            lines.append("; " + TFTFile._formatAttrs(attrs))
+    def _structDump(st, addr, covered, showHex):
+        """Comment lines with the bytes of an object struct that are neither decoded (covered ranges) nor zero; all bytes
+        with showHex."""
         if showHex or not covered:
-            return lines + TFTFile._dumpLines(st, addr)
+            return TFTFile._dumpLines(st, addr)
+        lines = []
         mask = bytearray(len(st))
         for c0, c1 in covered:
             mask[c0:c1] = b"\1" * (min(c1, len(st)) - c0)
@@ -1953,20 +1960,31 @@ class TFTFile:
             k = j
         return lines
 
-    def _describeStruct(self, o, st, blob, base):
+    @staticmethod
+    def _structLines(st, addr, header, attrs, covered, showHex):
+        """Comment lines for one object struct: the header line, the attributes and the undecoded bytes."""
+        lines = []
+        if header:
+            lines.append("; " + header)
+        if attrs:
+            lines.append("; " + TFTFile._formatAttrs(attrs))
+        return lines + TFTFile._structDump(st, addr, covered, showHex)
+
+    def _describeStruct(self, o, st, blob, base, geometry=True):
         """(header line, attributes, decoded byte ranges) of an object struct, see _objectBlocks."""
         attrs = self._structAttributes(o["code"], st, blob, base)
         covered = self._structCovered(o["code"], st, o["mem"])
         if attrs is None:       # layout fields are only decoded when the struct passes the validity checks
             covered = [c for c in covered if c[0] == 0]
-        return self._structHeader(o, st), attrs, covered
+        return self._structHeader(o, st, geometry), attrs, covered
 
     @staticmethod
-    def _objectBlocks(raw, addr, objects, structSizes, describe=None, showHex=False):
+    def _objectBlocks(raw, addr, objects, structSizes, describe=None, showHex=False, parts=None):
         """Lines for a page init data block that starts with the table of the object memory addresses followed by the
         object structs (runtime copies of the start of the object records), or None if the block is not of that form.
         describe(object, struct, block, base) may return (header line, attributes, decoded byte ranges); then only the
-        bytes that are not decoded and not zero are dumped, unless showHex."""
+        bytes that are not decoded and not zero are dumped, unless showHex. If parts is a dict it receives the pieces per object
+        index ({"header", "attrs", "dump"}) and "table" / "tail" lines, to build the listing of a page."""
         n = len(objects)
         if n == 0 or len(raw) < 4 * n:
             return None
@@ -1994,6 +2012,8 @@ class TFTFile:
             lines += ["", f"; object {i}: {o['type']} id {o['id']}{' ' + repr(o['name']) if o.get('name') else ''} @0x{o['mem']:x}, {size} bytes"]
             header, attrs, covered = describe(o, st, raw, base) if describe else (None, None, [])
             lines += TFTFile._structLines(st, addr + start, header, attrs, covered, showHex)
+            if parts is not None:
+                parts[i] = {"header": header, "attrs": attrs, "dump": TFTFile._structDump(st, addr + start, covered, showHex)}
             end_of_structs = start + size
         tail = raw[end_of_structs:].rstrip(b"\0")          # trailing zero bytes are padding
         if tail:
@@ -2001,6 +2021,10 @@ class TFTFile:
             lines += ["", f"; data after the object structs, {len(tail)} bytes"
                           + (f" ({dropped} trailing zero bytes dropped)" if dropped else "")]
             lines += TFTFile._dumpLines(tail, addr + end_of_structs)
+        if parts is not None:
+            parts["table"] = [lines[0]] + [ln for ln in lines[1:] if ln.startswith(".dd ")]
+            parts["tail"] = lines[lines.index(next(ln for ln in lines if ln.startswith("; data after the object structs"))):] \
+                if tail else []
         return lines
 
     @staticmethod
@@ -2167,14 +2191,15 @@ class TFTFile:
             covered += [(off, off + size) for _, off, size in layout[1]]
         return covered
 
-    def _structHeader(self, o, st):
+    def _structHeader(self, o, st, geometry=True):
         """One line with the header fields of a struct (see above), or None if the struct has no such header."""
         if len(st) < self._structHeaderSize or struct.unpack_from("<I", st, 28)[0] != o["mem"]:
             return None
         x, y, w, h, ex, ey = struct.unpack_from("<hhHHHH", st, 40)
         events = [f"{self._event_name(o['type'], i)}=0x{p:x}"
                   for i, p in enumerate(struct.unpack_from("<6I", st, 4)) if p != 0xffffffff]
-        return (f"flags=0x{st[3]:02x}, aph={st[34]}, x={x}, y={y}, w={w}, h={h}, endx={ex}, endy={ey}"
+        return (f"flags=0x{st[3]:02x}, aph={st[34]}"
+                + (f", x={x}, y={y}, w={w}, h={h}, endx={ex}, endy={ey}" if geometry else "")
                 + (f", events: {', '.join(events)}" if events else ""))
 
     def _nameTable(self):

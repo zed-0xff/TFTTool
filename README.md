@@ -97,12 +97,12 @@ out/
   headers/             header1.json, header2.json
   definitions/         global.nasm: the global data image decoded (series 4: variables, objects with a struct in the image,
                        page name hash table, the rest as hexdump without the zero lines) and the start-up code
-  pages/NNN.nasm       a page: a comment per component (geometry, decoded attributes, text, host event) followed by its event
-                       code as a listing: one statement per line, jump targets as `lbl_<address>:` labels,
-                       variables as `local_1ab3` / `global_14`, assignments as `a = b` (the .json files keep `local:0x1ab3`)
-  init/NNN.nasm        init code of a page, same listing format; `--hex` adds the address and bytes in front of every
-                       statement, blocks that are data / not decoded are always `.data` followed by a hex dump in comment lines (16 bytes per line); a page's first
-                       data block is split into the object address table (`.dd`) and one dump per object struct
+  pages/NNN.nasm       a page in one file: the object address table, then per component a comment (geometry, name hash, struct
+                       header, decoded attributes, text per language, host event, undecoded non-zero struct bytes) followed by its
+                       event code as a listing (the page object has its load code as `load`): one statement per line, jump
+                       targets as `lbl_<address>:` labels, variables as `local_1ab3` / `global_14`, assignments as `a = b`;
+                       `--hex` adds the address and bytes in front of every statement and dumps whole structs. Blocks that are
+                       data / not decoded are `.data` followed by a hex dump in comment lines (16 bytes per line)
   blocks/NNNN.json     only when pages can't be split: flat code block list, 500 per file
   pictures/            NNN.png and index.json
   fonts/               index.json (font headers), fontNN_atlas.png/.json (glyph atlases)
@@ -155,10 +155,10 @@ For series 4 files (TJC, e.g. Sovol SV08 Max, QIDI) the init data block of a pag
 by the runtime structs of the objects (`+28` of an object record is its address). For text and button objects the fields
 were found by comparing QIDI's `800_480_PLUS.tft` with its `.HMI` source (`tests/test_attributes.py` repeats the comparison);
 `TFTFile._structAttributes` lists the offsets. They are printed as a comment in `pages/NNN.nasm` and
-above each object dump in `init/NNN.nasm`: sta, font, background (bco / picc / pic depending on sta), pco, xcen, ycen,
+next to each object in `pages/NNN.nasm`: sta, font, background (bco / picc / pic depending on sta), pco, xcen, ycen,
 txt_maxl, isbr and the text itself for text objects; borderc, picc, picc2, pco, xcen, ycen, txt_maxl, isbr and text for buttons.
 Objects with ids of 256 and up keep their struct in the global data image (the first usercode block): the struct of the object
-with address A is at offset A + 40 there, text pointers too. Pages (sta, pic), crop (picc) and video (vid, en) objects have a few fields too. In `init/NNN.nasm` an object's header and
+with address A is at offset A + 40 there, text pointers too. Pages (sta, pic), crop (picc) and video (vid, en) objects have a few fields too. In `pages/NNN.nasm` an object's header and
 the decoded fields are printed as comment lines and only the bytes that are neither decoded nor zero are dumped (all bytes with `--hex`).
 Other attributes (bco and font of buttons, ...) and other component types are not decoded yet; most of them don't vary in
 the QIDI sources, so their position can't be found by comparison.

@@ -136,7 +136,7 @@ class Usercode:
                     if nostrings.startswith(jmp):
                         operation = True
                         skip += len(jmp)
-                        self.decoded += "jmp"
+                        self.decoded += "jmp "
 
                 if not operation:
                     if self.raw.startswith(b"\x09"):
@@ -1386,14 +1386,15 @@ class TFTFile:
         d["pages"] = pages
         return d
 
-    def writeOutput(self, outdir, includeUnknowns=True, pictures=True, raw=False, glyphs=True):
+    def writeOutput(self, outdir, includeUnknowns=True, pictures=True, raw=False, glyphs=True, hexListing=False):
         """Writes the decoded file as a tree of small json files (and the pictures as PNG) below outdir:
              info.json                 general info, pictures list
              headers/                  header1.json, header2.json
              definitions/              definitions.json (strings of the first usercode block)
              pages/NNN.json            page components with events, host events and text
+             pages/NNN.asm             the event code of the page as a listing
              names/NNN.json            component id -> CRC hash of its name (per page)
-             init/NNN.json             init code blocks of a page (component info, language texts, ...)
+             init/NNN.asm              init code of a page as an assembler style listing (address, bytes, statement)
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
              pictures/NNN.png          decoded pictures, pictures/index.json lists them
              fonts/index.json          font headers (name, height, encoding, data location, ASCII glyph tables)
@@ -1414,6 +1415,11 @@ class TFTFile:
             path = outdir / path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        def write_text(path, text):
+            path = outdir / path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
 
         data = guard("decode", lambda: self.getReadableData(includeUnknowns))
         if data is None:     # still write what is known without the usercode
@@ -1437,11 +1443,17 @@ class TFTFile:
                 continue
             name = f"{n:03d}.json"
             objs = pg.get("objects", [])
-            dump("pages/" + name, {"page": n, "objects": objs})
+            dump("pages/" + name, {"page": n, "objects": self._withoutHex(objs)})
+            listing = []
+            for o in objs:
+                for ename, blks in o.get("events", {}).items():
+                    listing.append(self.asmListing(blks, f"object id {o['id']} ({o['type']}): {ename}", hexListing))
+            if listing:
+                write_text("pages/" + name.replace(".json", ".asm"), f"; page {n} event code\n\n" + "\n".join(listing))
             if pg.get("name_hashes"):
                 dump("names/" + name, pg["name_hashes"])
             if pg.get("init"):
-                dump("init/" + name, pg["init"])
+                write_text("init/" + name.replace(".json", ".asm"), self.asmListing(pg["init"], f"page {n} init code", hexListing))
             index.append({"page": n, "objects": len(objs),
                           "host_widgets": sorted({he["widget"] for o in objs for he in o.get("host_events", {}).values()
                                                   if isinstance(he["widget"], int)})})
@@ -1734,6 +1746,68 @@ class TFTFile:
             recs.append({"first": first, "count": cnt, "code": code, "attr": attr, "size": size})
         return recs
 
+    @staticmethod
+    def asmListing(entries, title=None, withHex=False):
+        """Assembler style listing of decoded code blocks (entries with offset, size, hex and content).
+        Statements are printed indented, one per line. Jumps (`jmp N`, `else jump N`; the distance counts from the start of
+        the next block, which has a 4 byte size field) refer to labels `lbl_<address>` that are printed before the target
+        statement. With withHex every statement is preceded by its address and bytes (8 per line). Blocks that could
+        not be decoded or are data (control characters) are always printed as `.data` with an address and a hex dump."""
+        jump = re.compile(r"(^jmp |else jump )(0x[0-9a-f]+|\d+)$")
+        rows = []                      # (address, kind, text, raw)
+        targets = set()
+        for e in entries:
+            raw = bytes.fromhex(e["hex"]) if "hex" in e else b""
+            text = e["content"]
+            addr = int(e["offset"], 16)
+            if not isinstance(text, str):
+                text = json.dumps(text)
+            try:        # statements are decoded byte by byte, so UTF-8 text arrives as latin-1 mojibake
+                text = text.encode("latin-1").decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+            if raw and (text.startswith("RAW_DATA:") or any(ord(c) < 0x20 and c not in "\t\n" for c in text)):
+                rows.append((addr, "data", None, raw))
+                continue
+            stmts = text.split("\n")
+            m = jump.search(stmts[0])
+            if m:
+                dist = int(m.group(2), 0)
+                if dist >= 0x80000000:      # backward jump (loops)
+                    dist -= 1 << 32
+                target = addr + 4 + e["size"] + dist
+                targets.add(target)
+                stmts[0] = stmts[0][:m.start(2)] + f"lbl_{target:x}"
+            rows.append((addr, "code", stmts, raw))
+        lines = [f"; {title}"] if title else []
+        pending = sorted(targets)
+
+        def flush(upto):
+            while pending and (upto is None or pending[0] <= upto):
+                if lines and lines[-1]:
+                    lines.append("")
+                lines.append(f"lbl_{pending.pop(0):x}:")
+
+        for addr, kind, stmts, raw in rows:
+            flush(addr)
+            if kind == "data":
+                lines.append(f"{addr:06x}:  .data  ; {len(raw)} bytes")
+                for i in range(0, len(raw), 8):
+                    row = raw[i:i + 8]
+                    asc = "".join(chr(c) if 0x20 <= c < 0x7f else "." for c in row)
+                    lines.append(f"{addr + i:06x}:  {' '.join(f'{c:02x}' for c in row):<23}  |{asc}|")
+                lines.append("")
+            elif withHex:
+                parts = [raw[i:i + 8] for i in range(0, len(raw), 8)] or [b""]
+                for i in range(max(len(parts), len(stmts))):
+                    hx = " ".join(f"{c:02x}" for c in parts[i]) if i < len(parts) else ""
+                    st = stmts[i] if i < len(stmts) else ""
+                    lines.append(f"{addr + 8 * i:06x}:  {hx:<23}  {st}".rstrip())
+            else:
+                lines += ["    " + st.rstrip() for st in stmts]
+        flush(None)
+        return "\n".join(lines) + "\n"
+
     def _buildPages(self, blocks, page_objects, texts):
         """Assigns the usercode blocks to pages and the events to components.
 
@@ -1750,7 +1824,8 @@ class TFTFile:
                 text = self._block_text(blk)
                 if not text:
                     continue
-                entry = {"page": None, "blocks": [{"offset": f"0x{addr:x}", "size": len(blk.raw), "content": text}]}
+                entry = {"page": None, "blocks": [{"offset": f"0x{addr:x}", "size": len(blk.raw), "content": text,
+                                                   "hex": blk.raw.hex()}]}
                 if isinstance(blk.decoded, dict):
                     entry["name_hashes"] = {str(k): v for k, v in blk.decoded.items()}
                 pages.append(entry)
@@ -1764,7 +1839,7 @@ class TFTFile:
             first_event.append(min(ptrs) if ptrs else rec["code"])
 
         def entry(addr, blk, text):
-            return {"offset": f"0x{addr:x}", "size": len(blk.raw), "content": text}
+            return {"offset": f"0x{addr:x}", "size": len(blk.raw), "content": text, "hex": blk.raw.hex()}
 
         prolog = []
         for addr, blk in blocks:
@@ -1834,6 +1909,15 @@ class TFTFile:
                 pe["init"] = init
             pages.append(pe)
         return pages, prolog
+
+    @classmethod
+    def _withoutHex(cls, obj):
+        """Copy of a nested structure without the raw "hex" fields of code block entries."""
+        if isinstance(obj, dict):
+            return {k: cls._withoutHex(v) for k, v in obj.items() if k != "hex"}
+        if isinstance(obj, list):
+            return [cls._withoutHex(v) for v in obj]
+        return obj
 
     def _event_name(self, type_name, slot):
         """Get human-readable event name for a component type and slot index."""
@@ -1965,6 +2049,8 @@ if __name__ == '__main__':
     parser.add_argument("--probe", action="store_true",
                         help="Only print what was detected about the file (model, editor version, header 2 layout and "
                              "XOR key, validation result, section addresses) and exit.")
+    parser.add_argument("--hex", action="store_true",
+                        help="print the address and bytes in front of every statement of the .asm listings")
     parser.add_argument("--no-glyphs", action="store_true", help="do not write the font glyph atlases (fonts/*_atlas.png)")
     parser.add_argument("--no-pictures", action="store_true",
                         help="Don't decode and write the pictures (they are written by default).")
@@ -2008,7 +2094,7 @@ if __name__ == '__main__':
             out.write_text(result, encoding="utf-8")
             print(f"Output written to: {out}")
         else:
-            counts = tft.writeOutput(out, includeUnknowns=True, pictures=not args.no_pictures, raw=args.raw, glyphs=not args.no_glyphs)
+            counts = tft.writeOutput(out, includeUnknowns=True, pictures=not args.no_pictures, raw=args.raw, glyphs=not args.no_glyphs, hexListing=args.hex)
             if args.v:
                 print(tft.getReadable(includeUnknowns=True))
             if counts.get("errors"):

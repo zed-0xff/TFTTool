@@ -29,9 +29,16 @@ class InstructionLookup(unittest.TestCase):
         self.assertIn("no instruction set for editor tjc-1.65.9", f.instruction_note)
 
     def test_unknown_series_falls_back_with_note(self):
-        f = fake_file("T", 1, 65, 5, 4)
+        f = fake_file("T", 1, 65, 5, 7)
         self.assertIsNotNone(f._find_instructions())
-        self.assertIn("model series 4", f.instruction_note)
+        self.assertIn("model series 7", f.instruction_note)
+
+    def test_series4_tjc_verified_operators(self):
+        f = fake_file("T", 1, 65, 5, 4)
+        ops = f._find_instructions()["numerated_operators"]
+        self.assertEqual([ops[4][i] for i in (0, 12, 17, 18, 31, 39)], ["i", "page", "repo", "wepo", "ref", "covx"])
+        self.assertEqual([ops[8][i] for i in (0, 2, 15, 22, 48)], ["click", "btlen", "printh", "prints", "getpassw"])
+        self.assertEqual(f.instruction_note, "")
 
     def test_series_is_preferred_over_version(self):
         # nxt-1.65.1 exists as a generic set and as an F series (100) override: series 0 must get the generic one

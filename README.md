@@ -98,10 +98,12 @@ out/
   definitions/         definitions.json (+ global_blocks.json)
   pages/NNN.json       components of a page: position, events, host events, text
   names/NNN.json       component id -> hash of its name
-  init/NNN.json        init code of a page
+  pages/NNN.asm        the event code of a page as a listing: one statement per line, jump targets as `lbl_<address>:` labels
+  init/NNN.asm         init code of a page, same listing format; `--hex` adds the address and bytes in front of every
+                       statement, blocks that are data / not decoded are always `.data` with a hex dump
   blocks/NNNN.json     only when pages can't be split: flat code block list, 500 per file
   pictures/            NNN.png and index.json
-  fonts/index.json     font headers and the glyph tables of ASCII fonts
+  fonts/               index.json (font headers), fontNN_atlas.png/.json (glyph atlases)
   raw/                 resources.bin, usercode.bin, res<slot>_<kind>.bin (with --raw)
 ```
 
@@ -120,7 +122,7 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 
 ### Known gaps
 
-* Series 4 operator tables (TJC) are unverified; there is no source to compare with.
+* Series 4 (TJC, tjc-1.65.5) operator tables: the size-8 list equals series 3 (checked on the 5 operators the Sovol file uses), the size-4 list has only 6 named operators, verified from their use in the Sovol file (see `_derive_tjc_1_65_5_series4`); every other size-4 operator decodes as `op:4:<number>`.
 * `gmov` animations are not decoded.
 * Component attributes other than id, geometry and text (font, colours, ...) are not decoded.
 * Nextion T0/K0 files are only tested with the two sample files.

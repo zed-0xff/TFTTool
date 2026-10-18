@@ -753,3 +753,24 @@ def _derive_nxt_1_65_1_series100():
 
 
 all_instruction_sets.append(_derive_nxt_1_65_1_series100())
+
+
+def _derive_tjc_1_65_5_series4():
+    """Series 4 (TJC4827T043, Sovol SV08 Max) of tjc-1.65.5. The operator numbers differ from series 3, so only entries
+    that were verified from the context in the Sovol file are named, the rest decode as op:<size>:<number>:
+      size 4:  0 i (conditional), 12 page (`page dp`, `page 0` after the 0x65 touch frame), 17 repo / 18 wepo (the same
+               operands `global:0x14,100`: 17 reads the saved language at start-up and is followed by a range check, 18
+               follows the assignment of a new language), 31 ref (operands are component ids 2, 3, 4, 5, 11, 14),
+               39 covx (`covx <src>,<dst>,0,0` after a number is built)
+      size 8:  unchanged from series 3: click 0, btlen 2, printh 15, prints 22 and getpassw 48 all have the argument counts
+               of nxt-doc's "Full Instruction Set" (getpassw: hidden, no arguments, 67 uses without operands here)
+    """
+    import copy
+    base = next(e for e in all_instruction_sets if "tjc-1.65.5" in e["versions"])
+    model = copy.deepcopy(base["models"][3])
+    ops = model["numerated_operators"]
+    ops[4] = [{0: "i", 12: "page", 17: "repo", 18: "wepo", 31: "ref", 39: "covx"}.get(i) for i in range(40)]
+    return {"versions": ["tjc-1.65.5"], "models": {4: model}, "priority": 10}
+
+
+all_instruction_sets.append(_derive_tjc_1_65_5_series4())

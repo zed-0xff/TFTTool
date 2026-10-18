@@ -96,9 +96,8 @@ out/
   info.json            general info, page index (components and host widget ids per page), resources, checksums, errors
   headers/             header1.json, header2.json
   definitions/         definitions.json (+ global_blocks.json)
-  pages/NNN.json       components of a page: position, events, host events, text
-  names/NNN.json       component id -> hash of its name
-  pages/NNN.nasm       the event code of a page as a listing: one statement per line, jump targets as `lbl_<address>:` labels,
+  pages/NNN.nasm       a page: a comment per component (geometry, decoded attributes, text, host event) followed by its event
+                       code as a listing: one statement per line, jump targets as `lbl_<address>:` labels,
                        variables as `local_1ab3` / `global_14`, assignments as `a = b` (the .json files keep `local:0x1ab3`)
   init/NNN.nasm        init code of a page, same listing format; `--hex` adds the address and bytes in front of every
                        statement, blocks that are data / not decoded are always `.data` followed by a hex dump in comment lines (16 bytes per line); a page's first
@@ -124,7 +123,7 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 
 ### Known gaps
 
-* Series 4 (TJC, tjc-1.65.5) operator tables: the size-8 list equals series 3 (checked on the 5 operators the Sovol file uses), the size-4 list has only 6 named operators, verified from their use in the Sovol file (see `_derive_tjc_1_65_5_series4`); every other size-4 operator decodes as `op:4:<number>`.
+* Series 3 / 4 operator tables (nxt-1.65.1 series 3, tjc-1.65.5 series 4; both use the same numbering): the size-8 list is the old series 3 list with `doevents` at 48, the size-4 list has only 9 named operators (`i cle vis page fill repo wepo ref covx`), verified against the event source of Gaggiuino_35's NX4827P043 `.HMI` files and QIDI's `.HMI`, and the context in the Sovol file (see `_derive_xseries`); every other size-4 operator decodes as `op:4:<number>`. 97% of the command words in QIDI's source and 81% in Gaggiuino's are found in the decoded code (`tests/test_commands.py`).
 * `gmov` animations are not decoded.
 * Component attributes other than id, geometry and text are only decoded for text and button objects of series 4 files (see below).
 * Nextion T0/K0 files are only tested with the two sample files.
@@ -146,18 +145,19 @@ The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/font
 
 ### Component names
 The names of components and pages are stored only as hashes (CRC of the name padded with zero bytes to 14 bytes, see nxt-doc
-`TFT.md`; `names/NNN.json`). The tool guesses them: editor defaults (`b0`, `t12`, `tm0`, `tc0`, ...) and a short word list, and
-adds `name` to the objects of `pages/NNN.json`, to the page index in `info.json` and to the listings. `--names FILE` adds your
+`TFT.md`; shown as `name hash=` in the object headers of `pages/NNN.nasm`). The tool guesses them: editor defaults (`b0`, `t12`, `tm0`, `tc0`, ...) and a short word list, and
+adds `name` to the page index in `info.json` and to the headings of the listings. `--names FILE` adds your
 own word list (one name per line). On the Sovol file 636 of 740 components and 11 of 67 pages get a name.
 
 ### Component attributes (series 4)
 For series 4 files (TJC, e.g. Sovol SV08 Max, QIDI) the init data block of a page is a table of the object addresses followed
 by the runtime structs of the objects (`+28` of an object record is its address). For text and button objects the fields
 were found by comparing QIDI's `800_480_PLUS.tft` with its `.HMI` source (`tests/test_attributes.py` repeats the comparison);
-`TFTFile._structAttributes` lists the offsets. They are added as `attributes` to the objects of `pages/NNN.json` and printed
+`TFTFile._structAttributes` lists the offsets. They are printed as a comment in `pages/NNN.nasm` and
 above each object dump in `init/NNN.nasm`: sta, font, background (bco / picc / pic depending on sta), pco, xcen, ycen,
 txt_maxl, isbr and the text itself for text objects; borderc, picc, picc2, pco, xcen, ycen, txt_maxl, isbr and text for buttons.
-Pages (sta, pic), crop (picc) and video (vid, en) objects have a few fields too. In `init/NNN.nasm` an object's header and
+Objects with ids of 256 and up keep their struct in the global data image (the first usercode block): the struct of the object
+with address A is at offset A + 40 there, text pointers too. Pages (sta, pic), crop (picc) and video (vid, en) objects have a few fields too. In `init/NNN.nasm` an object's header and
 the decoded fields are printed as comment lines and only the bytes that are neither decoded nor zero are dumped (all bytes with `--hex`).
 Other attributes (bco and font of buttons, ...) and other component types are not decoded yet; most of them don't vary in
 the QIDI sources, so their position can't be found by comparison.

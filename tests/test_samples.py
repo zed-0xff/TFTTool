@@ -98,7 +98,7 @@ class WriteOutput(unittest.TestCase):
             counts = t.writeOutput(d, raw=True)
             self.assertEqual(counts["pages"], 1)
             self.assertNotIn("errors", counts)
-            for p in ("info.json", "headers/header1.json", "headers/header2.json", "pages/000.json", "fonts/index.json",
+            for p in ("info.json", "headers/header1.json", "headers/header2.json", "pages/000.nasm", "fonts/index.json",
                       "raw/usercode.bin"):
                 self.assertTrue(os.path.exists(os.path.join(d, p)), p)
             import json

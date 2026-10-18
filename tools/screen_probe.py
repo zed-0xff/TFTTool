@@ -32,7 +32,8 @@ RETURN_CODES = {
     0x09: "invalid crc", 0x11: "invalid baud rate setting", 0x12: "invalid waveform id or channel",
     0x1a: "invalid variable name or attribute", 0x1b: "invalid variable operation", 0x1c: "assignment failed",
     0x1d: "eeprom operation failed", 0x1e: "invalid parameter quantity", 0x1f: "io operation failed",
-    0x20: "undefined escape characters", 0x23: "too long variable name",
+    0x20: "undefined escape characters", 0x23: "too long variable name", 0x24: "serial buffer overflow",
+    0xfd: "transparent data finished", 0xfe: "transparent data ready (send the data now)",
     0x86: "device entered sleep", 0x87: "device woke up", 0x88: "system started", 0x89: "start sd card upgrade",
 }
 

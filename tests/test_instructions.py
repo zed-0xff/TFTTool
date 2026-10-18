@@ -37,9 +37,17 @@ class InstructionLookup(unittest.TestCase):
     def test_series4_tjc_verified_operators(self):
         f = fake_file("T", 1, 65, 5, 4)
         ops = f._find_instructions()["numerated_operators"]
-        self.assertEqual([ops[4][i] for i in (0, 12, 17, 18, 31, 39)], ["i", "page", "repo", "wepo", "ref", "covx"])
-        self.assertEqual([ops[8][i] for i in (0, 2, 15, 22, 48)], ["click", "btlen", "printh", "prints", "getpassw"])
+        self.assertEqual([ops[4][i] for i in (0, 2, 5, 12, 15, 17, 18, 31, 39)],
+                         ["i", "cle", "vis", "page", "fill", "repo", "wepo", "ref", "covx"])
+        self.assertEqual([ops[8][i] for i in (0, 2, 15, 16, 21, 22, 48)],
+                         ["click", "btlen", "printh", "strlen", "substr", "prints", "doevents"])
+
         self.assertEqual(f.instruction_note, "")
+
+    def test_series3_nxt_1_65_1_matches_series4_numbering(self):
+        ops = fake_file("N", 1, 65, 1, 3)._find_instructions()["numerated_operators"]
+        self.assertEqual([ops[4][i] for i in (12, 15, 39)], ["page", "fill", "covx"])
+        self.assertEqual(ops[8][48], "doevents")
 
     def test_series_is_preferred_over_version(self):
         # nxt-1.65.1 exists as a generic set and as an F series (100) override: series 0 must get the generic one

@@ -1393,9 +1393,7 @@ class TFTFile:
              info.json                 general info, pictures list
              headers/                  header1.json, header2.json
              definitions/              definitions.json (strings of the first usercode block)
-             pages/NNN.json            page components with events, host events and text
-             pages/NNN.nasm            the event code of the page as a listing
-             names/NNN.json            component id -> CRC hash of its name (per page)
+             pages/NNN.nasm            the page: a comment per component (geometry, attributes, text, host event) and its event code
              init/NNN.nasm             init code of a page as an assembler style listing (address, bytes, statement)
              blocks/NNNN.json          fallback when the pages can't be split: flat code block list
              pictures/NNN.png          decoded pictures, pictures/index.json lists them
@@ -1463,15 +1461,25 @@ class TFTFile:
                 continue
             name = f"{n:03d}.json"
             objs = pg.get("objects", [])
-            dump("pages/" + name, {"page": n, "objects": self._withoutHex(objs)})
-            listing = []
+            pname = next((o["name"] for o in objs if o.get("type") == "page" and o.get("name")), None)
+            listing = [f"; page {n}{' ' + repr(pname) if pname else ''}: {len(objs)} objects and their event code\n"]
             for o in objs:
+                oname = ' ' + repr(o["name"]) if o.get("name") else ""
+                hv = (pg.get("name_hashes") or {}).get(str(o["id"] & 0xff))
+                head = [f"; object id {o['id']} ({o['type']}{oname}): x={o['x']}, y={o['y']}, w={o['w']}, h={o['h']}"
+                        + (f", name hash={hv}" if isinstance(hv, str) else "")]
+                if o.get("attributes"):
+                    head.append("; " + self._formatAttrs(o["attributes"]))
+                if o.get("text"):
+                    head.append("; text:")
+                    head += [f";   {k}: {self._quoted(v)}" for k, v in o["text"].items()]
+                for ename, he in o.get("host_events", {}).items():
+                    head.append(f"; {ename} reports to the host: page {he['page']}, widget {he['widget']}")
+                block = ["\n".join(head) + "\n"]
                 for ename, blks in o.get("events", {}).items():
-                    listing.append(self.asmListing(blks, f"object id {o['id']} ({o['type']}{' ' + repr(o['name']) if o.get('name') else ''}): {ename}", hexListing))
-            if listing:
-                write_text("pages/" + name.replace(".json", ".nasm"), f"; page {n} event code\n\n" + "\n".join(listing))
-            if pg.get("name_hashes"):
-                dump("names/" + name, pg["name_hashes"])
+                    block.append(self.asmListing(blks, ename, hexListing))
+                listing.append("\n".join(block))
+            write_text("pages/" + name.replace(".json", ".nasm"), "\n".join(listing))
             if pg.get("init"):
                 meta = [{"type": o["type"], "id": o["id"], "mem": o["_mem"], "code": o["_type_code"],
                          "name": (objs[k].get("name") if k < len(objs) else None)}
@@ -1775,6 +1783,18 @@ class TFTFile:
         return recs
 
     @staticmethod
+    def _formatAttrs(attrs):
+        """`k=v, ...` for the decoded attributes of an object (colours in hex)."""
+        return ", ".join(
+            f"{k}={('0x%04x' % v) if k in ('bco', 'pco', 'pco2', 'borderc') else TFTFile._quoted(v)}"
+            for k, v in attrs.items())
+
+    @staticmethod
+    def _quoted(v):
+        """A value as it is written in the listings: strings in quotes, escape sequences of the code (\\r) as they are."""
+        return '"' + v.replace("\n", "\\n") + '"' if isinstance(v, str) else json.dumps(v)
+
+    @staticmethod
     def _dumpLines(raw, addr):
         """Hex dump as comment lines, 16 bytes per line."""
         lines = []
@@ -1801,10 +1821,15 @@ class TFTFile:
         for i in range(0, n, 8):
             lines.append(".dd " + ", ".join(f"0x{v:x}" for v in table[i:i + 8]))
         end_of_structs = len(raw)
+        in_block = [i for i, o in enumerate(objects) if base <= o["mem"] < base + len(raw)]
         for i, o in enumerate(objects):
             start = o["mem"] - base
-            if i + 1 < n:
-                size = objects[i + 1]["mem"] - o["mem"]
+            if i not in in_block:       # the struct of this object is in the global data image, not in this block
+                lines += ["", f"; object {i}: {o['type']} id {o['id']}{' ' + repr(o['name']) if o.get('name') else ''} @0x{o['mem']:x}, struct in the global data image"]
+                continue
+            nxt = next((objects[j]["mem"] for j in in_block if j > i and objects[j]["mem"] > o["mem"]), None)
+            if nxt is not None:
+                size = nxt - o["mem"]
             else:
                 size = (structSizes or {}).get(o["code"], len(raw) - start)
             size = max(0, min(size, len(raw) - start))
@@ -1814,9 +1839,7 @@ class TFTFile:
             if header:
                 lines.append("; " + header)
             if attrs:
-                lines.append("; " + ", ".join(
-                    f"{k}={('0x%04x' % v) if k in ('bco', 'pco', 'pco2', 'borderc') else json.dumps(v, ensure_ascii=False)}"
-                    for k, v in attrs.items()))
+                lines.append("; " + TFTFile._formatAttrs(attrs))
             if showHex or not covered:
                 lines += TFTFile._dumpLines(st, addr + start)
             else:
@@ -2119,6 +2142,20 @@ class TFTFile:
                                 struct_attrs[i] = a
                 except Exception:
                     pass
+            if self._getVal("model_series") == 4:
+                # objects with ids >= 256 keep their struct in the global data image, where an address A is at offset A + 40
+                gimg = max((b.raw for _, b in blocks[:4]), key=len, default=b"")
+                for i, o in enumerate(obj_list):
+                    size = self._structLayouts.get(o["_type_code"], (0,))[0]
+                    st0 = o["_mem"] + 40
+                    if i in struct_attrs or not size or st0 + size > len(gimg):
+                        continue
+                    st = gimg[st0:st0 + size]
+                    if st[0] != o["_type_code"] or st[1] | (st[2] << 8) != o["id"]:
+                        continue
+                    a = self._structAttributes(o["_type_code"], st, gimg, -40)
+                    if a:
+                        struct_attrs[i] = a
             clean_objects = []
             for obj_i, obj in enumerate(obj_list):
                 clean_obj = {"id": obj["id"], "type": obj["type"], "x": obj["x"], "y": obj["y"],

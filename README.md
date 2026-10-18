@@ -121,8 +121,7 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 ### Known gaps
 
 * Series 4 operator tables (TJC) are unverified; there is no source to compare with.
-* F series pictures (format 1, a dictionary of 8 pixel tiles) and `gmov` animations are not decoded.
-* Glyph bitmaps of the fonts are not decoded.
+* `gmov` animations are not decoded.
 * Component attributes other than id, geometry and text (font, colours, ...) are not decoded.
 * Nextion T0/K0 files are only tested with the two sample files.
 
@@ -132,3 +131,11 @@ Fonts use the `.zi` glyph format (spec: `hagronnestad/nextion-font-editor`, ZI v
 encoding name), and per glyph a stream of 1-byte drawing modes (`TFTFile.decodeGlyph`; level 0-7 anti-aliased or black/white).
 The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/fontNN_atlas.png` + `.json` (the character code of every cell) for every font with such a table
 (the nspanel NotoSans fonts, all three Sovol fonts, the 11 fonts of each HASPone file).
+
+### Extra tools
+
+* `tools/screen_probe.py` (needs `pyserial`): probes a Nextion / TJC serial screen (`scan` for baud rate and model, `touch`
+  for `sendxy` touch frames, `draw` for the stock drawing commands, `upload` for timed `twfile` JPEG uploads, `raw`, and `flash`,
+  which verifies the `.tft` checksums with this tool before writing it with `whmi-wri`). Run with `--help`.
+* `sovol/widget_map.py`: joins the decoded Sovol `.tft` with the host handlers of the stock client source (`ui.h` / `ui.cpp`,
+  not included) into a page-to-widget map; the result for the stock firmware is `sovol/widget_map.md`.

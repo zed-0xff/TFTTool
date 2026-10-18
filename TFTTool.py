@@ -1168,25 +1168,111 @@ class TFTFile:
             pass
         return {"first_code": glyphs[0]["code"] if glyphs else None, "glyph_count": len(glyphs), "glyphs": glyphs}
 
+    def _glyphTable(self, font):
+        """Glyph table of a .zi style font blob (name, encoding, then <code u16><advance u8><b3><b4><offset u24><length u16>
+        entries, offsets relative to the end of the encoding name). Returns (data, glyphs) or None."""
+        data = self.raw[font["data_offset"]:font["data_offset"] + font["data_size"]]
+        m = re.search(rb"(utf-8|gb2312|iso-8859-\d+|big5|shift-jis)", data[:96], flags=re.I)
+        if not m:
+            return None
+        base = m.end()
+        for mult in (1, 8):          # ZI v6 files > 16 MB store the data offsets divided by 8
+            p, glyphs = base, []
+            while p + 10 <= len(data):
+                code, adv = struct.unpack_from("<HB", data, p)
+                off = (data[p + 5] | (data[p + 6] << 8) | (data[p + 7] << 16)) * mult
+                ln = struct.unpack_from("<H", data, p + 8)[0]
+                if (glyphs and code <= glyphs[-1]["code"]) or base + off + ln > len(data):
+                    break
+                if glyphs and p >= base + glyphs[0]["_off"]:
+                    break            # reached the glyph data
+                glyphs.append({"code": code, "advance": adv, "kerning": (data[p + 3], data[p + 4]), "_off": off,
+                               "data": data[base + off:base + off + ln]})
+                p += 10
+            first = next((g["data"][:1] for g in glyphs if g["data"]), b"")
+            if glyphs and first in (b"\x01", b"\x03"):
+                break
+        else:
+            return None
+        for g in glyphs:
+            del g["_off"]
+        return data, glyphs
+
     @staticmethod
-    def glyphRunLengths(glyph):
-        """Pixel count of every token of a compressed glyph (data starts with a type byte 3 or 1; row-major, advance
-        pixels per row, line height rows). Token classes found by fitting NotoSans .zi fonts against a TTF render:
-          00-1f  run of t blank pixels (1f = 31)          20-3f  run of (t & 1f) pixels at full level
-          c0-ff  two literal pixels, 3-bit levels (t>>3&7, t&7), level l is about 255*sqrt(l/7)
-          40-7f  (t & 1f)+1 pixels, 80-bf  (t>>3&7)+1 pixels: blank / copy-from-row-above style runs, meaning not decoded
-        The counts sum to advance * line height for ~87% of the glyphs."""
-        def run(t):
+    def _glyphRuns(stream):
+        """Yields (blank pixels, opaque or alpha pixels) of every drawing mode byte of a glyph stream, see decodeGlyph."""
+        aa = stream[:1] == b"\x03"
+        for t in stream[1:]:
+            x = t & 0x1f
             if t < 0x20:
-                return t
-            if t < 0x40:
-                return t & 0x1f
-            if t < 0x80:
-                return (t & 0x1f) + 1
-            if t < 0xc0:
-                return ((t >> 3) & 7) + 1
-            return 2
-        return [run(t) for t in glyph[1:]]
+                yield x, []
+            elif t < 0x40:
+                yield 0, [7] * x
+            elif t < 0x60:
+                yield x, [7]
+            elif t < 0x80:
+                yield x, [7, 7]
+            elif aa:
+                yield (((t >> 3) & 7), [t & 7]) if t < 0xc0 else (0, [(t >> 3) & 7, t & 7])
+            elif t < 0xa0:
+                yield x, [7] * 3
+            elif t < 0xc0:
+                yield x, [7] * 4
+            else:
+                yield (t >> 3) & 7, [7] * (t & 7)
+
+    @staticmethod
+    def decodeGlyph(stream, width, height):
+        """Decodes a glyph stream (ZI font format v5/v6, see hagronnestad/nextion-font-editor) into width*height levels
+        0-7 (0 transparent, 7 opaque), row by row. The first byte is 3 for anti-aliased and 1 for black/white glyphs; every
+        following byte is a drawing mode: 000x run of blank / 001x run of opaque pixels (x = low 5 bits), 010x x blanks +
+        1 opaque, 011x x blanks + 2 opaque, then either (anti-aliased) 10xxxccc xxx blanks + 1 pixel of level ccc and
+        11cccddd two pixels, or (black/white) 100x x blanks + 3 opaque, 101x x blanks + 4 opaque, 11wwwbbb www blanks +
+        bbb opaque. The result is padded / cut to width*height."""
+        o = []
+        for blank, pixels in TFTFile._glyphRuns(stream):
+            o += [0] * blank + pixels
+        return (o + [0] * (width * height))[:width * height]
+
+    @staticmethod
+    def glyphPixelCount(stream):
+        """Number of pixels a glyph stream describes (should equal (width + kerning left + kerning right) * height)."""
+        return sum(b + len(p) for b, p in TFTFile._glyphRuns(stream))
+
+    def exportFontAtlases(self, directory, columns=32):
+        """Glyph atlases (one PNG per font with a readable glyph table). Returns the number written."""
+        import pathlib
+        directory = pathlib.Path(directory)
+        written = 0
+        for f in self.getFonts():
+            gt = self._glyphTable(f)
+            if gt is None or not f["height"]:
+                continue
+            _, glyphs = gt
+            h = f["height"]
+            cw = max(g["advance"] + sum(g["kerning"]) for g in glyphs) or 1
+            rows = (len(glyphs) + columns - 1) // columns
+            W, H = columns * cw, rows * h
+            if W * H > 40_000_000:
+                continue
+            img = bytearray(W * H)
+            for i, g in enumerate(glyphs):
+                gw = g["advance"] + sum(g["kerning"])
+                bits = [255 * v // 7 for v in self.decodeGlyph(g["data"], gw, h)]
+                x0, y0 = (i % columns) * cw, (i // columns) * h
+                for y in range(h):
+                    row = bits[y * gw:(y + 1) * gw]
+                    img[(y0 + y) * W + x0:(y0 + y) * W + x0 + len(row)] = bytes(row)
+            directory.mkdir(parents=True, exist_ok=True)
+            rgb = bytearray()
+            for v in img:
+                rgb += bytes((v, v, v))
+            self.writePNG(str(directory / f"font{f['index']:02d}_atlas.png"), W, H, bytes(rgb))
+            (directory / f"font{f['index']:02d}_atlas.json").write_text(json.dumps(
+                {"columns": columns, "cell_w": cw, "cell_h": h,
+                 "codes": [g["code"] for g in glyphs]}))
+            written += 1
+        return written
 
     def getRawBootloader(self):
         start = self._getVal("ressources_files_address")
@@ -1300,7 +1386,7 @@ class TFTFile:
         d["pages"] = pages
         return d
 
-    def writeOutput(self, outdir, includeUnknowns=True, pictures=True, raw=False):
+    def writeOutput(self, outdir, includeUnknowns=True, pictures=True, raw=False, glyphs=True):
         """Writes the decoded file as a tree of small json files (and the pictures as PNG) below outdir:
              info.json                 general info, pictures list
              headers/                  header1.json, header2.json
@@ -1380,6 +1466,8 @@ class TFTFile:
         if fonts:
             dump("fonts/index.json", fonts)
             counts["fonts"] = len(fonts)
+            if glyphs:
+                counts["font_atlases"] = guard("glyphs", lambda: self.exportFontAtlases(outdir / "fonts"), 0)
         if raw:
             def write_raw():
                 (outdir / "raw").mkdir(parents=True, exist_ok=True)
@@ -1877,6 +1965,7 @@ if __name__ == '__main__':
     parser.add_argument("--probe", action="store_true",
                         help="Only print what was detected about the file (model, editor version, header 2 layout and "
                              "XOR key, validation result, section addresses) and exit.")
+    parser.add_argument("--no-glyphs", action="store_true", help="do not write the font glyph atlases (fonts/*_atlas.png)")
     parser.add_argument("--no-pictures", action="store_true",
                         help="Don't decode and write the pictures (they are written by default).")
     parser.add_argument("--raw", action="store_true",
@@ -1919,7 +2008,7 @@ if __name__ == '__main__':
             out.write_text(result, encoding="utf-8")
             print(f"Output written to: {out}")
         else:
-            counts = tft.writeOutput(out, includeUnknowns=True, pictures=not args.no_pictures, raw=args.raw)
+            counts = tft.writeOutput(out, includeUnknowns=True, pictures=not args.no_pictures, raw=args.raw, glyphs=not args.no_glyphs)
             if args.v:
                 print(tft.getReadable(includeUnknowns=True))
             if counts.get("errors"):

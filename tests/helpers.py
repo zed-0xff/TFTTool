@@ -18,7 +18,8 @@ def sample_dirs():
     dirs += [d for d in os.environ.get("TFTTOOL_SAMPLES", "").split(os.pathsep) if d]
     parent = os.path.dirname(ROOT)
     dirs += [os.path.join(parent, "TFTTool.dd5md", "Example"),
-             os.path.join(parent, "nspanel-lovelace-ui", "HMI")]
+             os.path.join(parent, "nspanel-lovelace-ui", "HMI"),
+             os.path.join(parent, "HASPone", "Nextion_HMI")]
     return [d for d in dirs if os.path.isdir(d)]
 
 

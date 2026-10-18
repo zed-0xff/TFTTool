@@ -126,7 +126,9 @@ nspanel-lovelace-ui files with the nextion2text output of their source.
 * Component attributes other than id, geometry and text (font, colours, ...) are not decoded.
 * Nextion T0/K0 files are only tested with the two sample files.
 
-### Glyph bitmaps (partial)
-Glyph streams are row-major token streams (`TFTFile.glyphRunLengths` documents the token classes found). Blank runs
-(`00-1f`), full-ink runs (`20-3f`) and two-pixel literals with 3-bit levels (`c0-ff`) are understood; the `40-bf` tokens
-(pixel runs that mostly repeat the row above) are not, so no glyph bitmaps are exported yet.
+### Glyph bitmaps
+Fonts use the `.zi` glyph format (spec: `hagronnestad/nextion-font-editor`, ZI v5/v6): a table of
+`<code u16><width u8><kerning left u8><kerning right u8><offset u24><length u16>` entries (offsets relative to the end of the
+encoding name), and per glyph a stream of 1-byte drawing modes (`TFTFile.decodeGlyph`; level 0-7 anti-aliased or black/white).
+The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/fontNN_atlas.png` + `.json` (the character code of every cell) for every font with such a table
+(the nspanel NotoSans fonts, all three Sovol fonts, the 11 fonts of each HASPone file).

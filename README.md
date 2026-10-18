@@ -138,27 +138,34 @@ The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/font
 
 ### Extra tools
 
+* `tools/patch_tft.py`: patches a series 4 `.tft` (moves / resizes one object, e.g. the stock preview page's external picture
+  `ram/176.jpg` to the whole 480x272 screen, `--geometry 0,0,480,272`) and fixes the checksums; `--list` shows the objects of a page.
+  `tools/testimg/` has two JPEG test patterns (480x272 and 176x176).
 * `tools/screen_probe.py` (needs `pyserial`): probes a Nextion / TJC serial screen (`scan` for baud rate and model, `touch`
   for `sendxy` touch frames, `draw` for the stock drawing commands, `upload` for timed `twfile` JPEG uploads, `raw`, and `flash`,
-  which verifies the `.tft` checksums with this tool before writing it with `whmi-wri`). Run with `--help`.
+  which verifies the `.tft` checksums with this tool before writing it with `whmi-wri`; `bench` measures the draw command rate, optionally at a higher baud rate). Run with `--help`.
 * `sovol/widget_map.py`: joins the decoded Sovol `.tft` with the host handlers of the stock client source (`ui.h` / `ui.cpp`,
   not included) into a page-to-widget map; the result for the stock firmware is `sovol/widget_map.md`.
 
 ### Component names
 The names of components and pages are stored only as hashes (CRC of the name padded with zero bytes to 14 bytes, see nxt-doc
-`TFT.md`; shown as `name hash=` in the object headers of `pages/NNN.nasm`). The tool guesses them: editor defaults (`b0`, `t12`, `tm0`, `tc0`, ...) and a short word list, and
-adds `name` to the page index in `info.json` and to the headings of the listings. `--names FILE` adds your
-own word list (one name per line). On the Sovol file 636 of 740 components and 11 of 67 pages get a name.
+`TFT.md`; shown as `name hash=` in the object headers of `pages/NNN.nasm`). The tool guesses them: editor defaults (`b0`, `t12`,
+`tm0`, `tc0`, `exp0` for external pictures, `gm0` for videos, ...), a short word list, the names found in the Sovol firmware
+(the page names are the lower case `TJC_PAGE_*` names of the stock client) and `names_samples.txt`, the 1,491 component and
+page names of the `.HMI` sources of the sample projects; a match of the 32-bit hash is the evidence, so a wrong name is unlikely.
+They are added as `name` to the page index in `info.json` and to the headings of the listings. `--names FILE` adds your own
+word list (one name per line). On the Sovol file 735 of the 740 objects get a name (62 of the 67 pages); the 5 pages that are
+not found are 8 (`IP_POP` in the client), 43 (`UNLOADING2`), 44 (`LOADING2`), 62 (`HEATED_BED`) and 65 (`HEATED_BED_2`).
 
 ### Component attributes (series 4)
 For series 4 files (TJC, e.g. Sovol SV08 Max, QIDI) the init data block of a page is a table of the object addresses followed
 by the runtime structs of the objects (`+28` of an object record is its address). For text and button objects the fields
-were found by comparing QIDI's `800_480_PLUS.tft` with its `.HMI` source (`tests/test_attributes.py` repeats the comparison);
+were found by comparing QIDI's `800_480_PLUS.tft` with its `.HMI` source (`tests/test_attributes.py` repeats the comparison for the QIDI Plus3, klipmi Q1 and QIDI Plus4 sources);
 `TFTFile._structAttributes` lists the offsets. They are printed as a comment in `pages/NNN.nasm` and
 next to each object in `pages/NNN.nasm`: sta, font, background (bco / picc / pic depending on sta), pco, xcen, ycen,
 txt_maxl, isbr and the text itself for text objects; borderc, picc, picc2, pco, xcen, ycen, txt_maxl, isbr and text for buttons.
 Objects with ids of 256 and up keep their struct in the global data image (the first usercode block): the struct of the object
-with address A is at offset A + 40 there, text pointers too. Pages (sta, pic), crop (picc) and video (vid, en) objects have a few fields too. In `pages/NNN.nasm` an object's header and
+with address A is at offset A + 40 there, text pointers too. Pages (sta, pic), crop (picc), video (vid, en, dis), number (font, pco, xcen, ycen, val), progress bar (val, bco, pco), picture (pic), sliding text (font, txt_maxl), timer (tim, en), variable (sta, val) and external picture (path) objects have a few fields too (found by comparing the QIDI Plus3 / Plus4 and klipmi sources; the number, progress bar and sliding text layouts rest on few samples). The layouts are only valid for structs in a page's init block, in the global image only text and button objects are decoded. In `pages/NNN.nasm` an object's header and
 the decoded fields are printed as comment lines and only the bytes that are neither decoded nor zero are dumped (all bytes with `--hex`).
 Other attributes (bco and font of buttons, ...) and other component types are not decoded yet; most of them don't vary in
 the QIDI sources, so their position can't be found by comparison.
@@ -168,7 +175,7 @@ The first usercode block is the global data image. An address `A` of the code is
 header: sizes and positions of the page name hash table and of a second table). `definitions/global.nasm` lists the global
 variables the code uses (`global_14` is the language, `global_2c` the brightness, with their initial values), every object whose
 struct lives in the image (ids of 256 and up; the `0x3c` external picture objects show their `path`, e.g. `ram/176.jpg`), the page
-name hash table (hash and page index of every page; the hashes match the names of the page objects) and what is left that is not zero.
+name hash table (hash and page index of every page; the hashes match the names of the page objects), the attribute name hash table (74 sorted CRCs of the names of the attributes, hashed as they are, e.g. `x`, `endx`, `groupid0`, `txt_maxl`; all 74 are recovered) and what is left that is not zero.
 
 ## Related projects
 

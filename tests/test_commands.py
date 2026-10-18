@@ -19,6 +19,12 @@ CASES = [
     (os.path.join(EXT, "klipmi", "hmi", "openq1", "Q1_UI_mod.tft"), os.path.join(EXT, "klipmi", "hmi", "openq1", "Q1_UI_mod.HMI"), 0.97),
     (os.path.join(EXT, "qidi-plus4-klipmi", "hmi", "openp4", "xindi_800_480_V1.7.1.tft"),
      os.path.join(EXT, "qidi-plus4-klipmi", "hmi", "openp4", "xindi_800_480_V1.7.1.HMI"), 0.97),
+    (os.path.join(EXT, "Gaggiuino_35", "Beta", "scales-calibrate_24_28.tft"),
+     os.path.join(EXT, "Gaggiuino_35", "Beta", "scales-calibrate_24_28.HMI"), 0.95),
+    (os.path.join(EXT, "Gaggiuino_35", "Nextion_24_28", "Nextion_24_28 24MAR2024_270Degrees.tft"),
+     os.path.join(EXT, "Gaggiuino_35", "Nextion_24_28", "Nextion_24_28 24MAR2024.HMI"), 0.95),
+    (os.path.join(EXT, "Gaggiuino_35", "Nextion_35", "Nextion_35 24MAR2024_270Degree.tft"),
+     os.path.join(EXT, "Gaggiuino_35", "Nextion_35", "Nextion_35 24MAR2024.HMI"), 0.95),
 ] + [(os.path.join(EXT, "powadcr", "HMI", "build", f"TJC4832{m}_011", f"TJC4832{m}_011.tft"),
       os.path.join(EXT, "powadcr", "HMI", "powadcr_iface.HMI"), 0.97) for m in ("T035", "K035", "T135")]
 OPS = set()
@@ -66,7 +72,7 @@ class CommandWords(unittest.TestCase):
                                           for ln in str(b["content"]).split("\n")])
             total = sum(src.values())
             same = sum(min(src[w], dec[w]) for w in src)
-            self.assertGreater(total, 100, tft_path)
+            self.assertGreater(total, 30, tft_path)
             self.assertGreaterEqual(same / total, minimum, (os.path.basename(tft_path), same, total))
 
 

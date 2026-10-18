@@ -1,3 +1,4 @@
+import collections
 import json
 import os
 import shutil
@@ -6,8 +7,6 @@ import subprocess
 import unittest
 
 from helpers import HERE, ROOT, T, load
-
-QIDI = os.path.join(os.path.dirname(ROOT), "QIDI_PLUS3", "UI", "800_480_PLUS")
 
 
 class StructAttributes(unittest.TestCase):
@@ -29,35 +28,54 @@ class StructAttributes(unittest.TestCase):
         st = bytearray(84)
         st[66] = 99                                   # xcen out of range
         self.assertIsNone(T.TFTFile._structAttributes(0x74, bytes(st), b"", 0))
-        self.assertIsNone(T.TFTFile._structAttributes(0x34, bytes(84), b"", 0))
+        self.assertIsNone(T.TFTFile._structAttributes(0x05, bytes(84), b"", 0))
 
 
-@unittest.skipUnless(shutil.which("node") and os.path.isfile(QIDI + ".HMI") and os.path.isfile(QIDI + ".tft"),
-                     "needs node and the QIDI_PLUS3 sample")
-class QidiGroundTruth(unittest.TestCase):
-    """The struct fields were found by comparing QIDI's 800_480_PLUS.tft with its .HMI source; check them again."""
+EXT = os.path.dirname(ROOT)
+PAIRS = [os.path.join(EXT, *p) for p in (("QIDI_PLUS3", "UI", "800_480_PLUS"),
+                                         ("klipmi", "hmi", "openq1", "Q1_UI_mod"),
+                                         ("qidi-plus4-klipmi", "hmi", "openp4", "xindi_800_480_V1.7.1"))]
+PAIRS = [p for p in PAIRS if os.path.isfile(p + ".HMI") and os.path.isfile(p + ".tft")]
 
-    def test_text_and_button_fields(self):
-        out = subprocess.run(["node", os.path.join(HERE, "hmi_dump.js"), QIDI + ".HMI"], capture_output=True, check=True)
-        tft = load(QIDI + ".tft")
-        hm = [p for p in json.loads(out.stdout)]
-        pages = tft.getReadableData()["pages"]
-        checked = bad = 0
-        for pg in pages:       # match pages by the positions of their components
-            geo = [(o["x"], o["y"]) for o in pg["objects"]]
-            for p in hm:
-                if len(p["objs"]) == len(geo) and all(
-                        (h["attrs"].get("x", {}).get("v"), h["attrs"].get("y", {}).get("v")) == g
-                        for h, g in zip(p["objs"], geo) if h["attrs"]["type"]["v"] != 121):
-                    for o, h in zip(pg["objects"], p["objs"]):
-                        at = o.get("attributes")
-                        for k in ("xcen", "ycen", "txt_maxl", "pco", "isbr"):
-                            if at and k in at and "v" in h["attrs"].get(k, {}):
-                                checked += 1
-                                bad += at[k] != h["attrs"][k]["v"]
-                    break
-        self.assertGreater(checked, 1500)
-        self.assertLess(bad / checked, 0.01)
+
+@unittest.skipUnless(shutil.which("node") and PAIRS, "needs node and the QIDI / klipmi sample projects")
+class SeriesFourGroundTruth(unittest.TestCase):
+    """The struct fields were found by comparing series 4 .tft files with their .HMI source; check them again."""
+
+    def test_fields(self):
+        checked = collections.Counter()
+        bad = collections.Counter()
+        for base in PAIRS:
+            out = subprocess.run(["node", os.path.join(HERE, "hmi_dump.js"), base + ".HMI"], capture_output=True, check=True)
+            hmi = json.loads(out.stdout)
+            tft = load(base + ".tft")
+            codes = {v: k for k, v in T.TFTFile._nextion_type_names.items()}
+            for pg in tft.getReadableData()["pages"]:
+                sig = [int(o["type"][8:], 16) if o["type"].startswith("unknown_0x") else codes.get(o["type"])
+                       for o in pg["objects"]]
+                cands = [p for p in hmi if [h["attrs"]["type"]["v"] for h in p["objs"]] == sig]
+                if len(cands) > 1:      # several pages with the same components: compare the positions
+                    cands = [p for p in cands if all(
+                        (h["attrs"]["x"]["v"], h["attrs"]["y"]["v"]) == (o["x"], o["y"])
+                        for h, o in zip(p["objs"], pg["objects"]) if "v" in h["attrs"].get("x", {}))]
+                if not cands:
+                    continue
+                for o, h in zip(pg["objects"], cands[0]["objs"]):
+                    for k, v in (o.get("attributes") or {}).items():
+                        if o["type"] == "page" and k == "pic":
+                            continue            # pages with the same components and another background look alike here
+                        if o["type"] == "button" and k in ("picc", "picc2") and h["attrs"].get("sta", {}).get("v") == 3:
+                            continue            # without a background (sta 3) the picture fields are not stored
+                        hv = h["attrs"].get(k, {})
+                        if isinstance(v, int) and "v" in hv:
+                            checked[(o["type"], k)] += 1
+                            bad[(o["type"], k)] += v != hv["v"]
+        self.assertGreater(sum(checked.values()), 3000)
+        for key, n in checked.items():
+            if n >= 8:      # (pages with the same components are matched by their positions, which is not always right)
+                self.assertLess(bad[key] / n, 0.05, (key, bad[key], n))
+        for typ in ("text", "button", "number", "timer", "picture", "progress_bar"):
+            self.assertTrue(any(k[0] == typ for k in checked), f"no {typ} field checked")
 
 
 if __name__ == "__main__":

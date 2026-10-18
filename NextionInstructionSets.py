@@ -741,13 +741,13 @@ all_instruction_sets.append(_derive_nxt_1_68_2())
 
 def _derive_nxt_1_65_1_series100():
     """Same method as above for the nxt-1.65.1 F series file (nspanel_US_L-I.tft). The size-8 list of the generic
-    1.6x set is correct for it; in the size-4 list xstr is at 21 and covx at 34."""
+    1.6x set is correct for it; in the size-4 list nstr is at 20, xstr at 21, zstr at 22 and covx at 34."""
     import copy
     base = next(e for e in all_instruction_sets if "nxt-1.68.1" in e["versions"])
     model = copy.deepcopy(base["models"][100])
     ops = model["numerated_operators"]
     verified4 = {i: ops[4][i] for i in range(14)}
-    verified4.update({21: "xstr", 34: "covx"})
+    verified4.update({20: "nstr", 21: "xstr", 22: "zstr", 34: "covx"})   # nstr / zstr: Gaggiuino_35 F035 vs T028 builds
     ops[4] = [verified4.get(i) for i in range(35)]
     return {"versions": ["nxt-1.65.1"], "models": {100: model}, "priority": 10}
 
@@ -761,10 +761,10 @@ all_instruction_sets.append(_derive_nxt_1_65_1_series100())
 # else of the size-4 list decodes as op:4:<number>.
 #   size 4:  0 i (conditional), 2 cle, 5 vis, 12 page, 15 fill, 17 repo / 18 wepo (same operands `global:0x14,100`: 17
 #            reads the saved language at start-up and is followed by a range check, 18 follows the assignment of a new
-#            language), 31 ref (operands are component ids), 39 covx, 9 tsw (QIDI Plus4 and Q1 sources)
+#            language), 31 ref (operands are component ids), 39 covx, 9 tsw (QIDI Plus4 and Q1 sources), 8 cov (`cov a,b,0` in the QIDI and Gaggiuino sources)
 #   size 8:  the list of series 3 with 48 = doevents (it was getpassw there); click 0, btlen 2, printh 15, strlen 16, substr 21
 #            and prints 22 were confirmed.
-_XSERIES_SIZE4 = {0: "i", 2: "cle", 5: "vis", 9: "tsw", 12: "page", 15: "fill", 17: "repo", 18: "wepo", 31: "ref", 39: "covx"}
+_XSERIES_SIZE4 = {0: "i", 2: "cle", 5: "vis", 8: "cov", 9: "tsw", 12: "page", 15: "fill", 17: "repo", 18: "wepo", 31: "ref", 39: "covx"}
 
 
 def _derive_xseries(versions, series, base_version="tjc-1.65.5", base_series=3):
@@ -782,26 +782,52 @@ all_instruction_sets.append(_derive_xseries(["tjc-1.65.5", "tjc-1.66.1", "tjc-1.
 all_instruction_sets.append(_derive_xseries(["nxt-1.65.1"], 3, "nxt-1.65.1", 3))
 
 
-# TJC editor 1.67.4, checked with powadcr's TJC4832T035 / K035 / T135 .tft files and their .HMI source. Only the operators that
-# were seen in the source are named; the rest of the size-4 list and the shifted part of the size-8 list of series 100 is not known.
-#   series 0 / 1: the tables of 1.65.5 stay valid; size 4: 28 covx; size 8: print 4, substr 14, prints 15
-#   series 100:   size 4: page 11, covx 35; size 8: print 4, substr 15, prints 16 (one operator more before them than in 1.65.5)
+# TJC editor 1.67.4, checked with powadcr's TJC4832T035 / K035 / T135 .tft files and their .HMI source. The three builds are the
+# same project, so the compiler generated code (drawing, refresh, init) has the same shape in all of them; the operators that
+# are not in the .HMI source were named by lining up the code of the builds (equal sequences), the names come from series 0.
+#   series 0:   the tables of 1.65.5 stay valid up to init (22); the entries up to covx (28) are not verified
+#   series 1:   as series 0, but init is 24 and covx 32 (size 4)
+#   series 100: size 4: i 0, pic 1, ref 3, cir 4, page 11, fill 13, nstr 21, zstr 23, cirs 24, init 29, covx 35;
+#               size 8: one operator more before substr than in 1.65.5 (print 4, draw3d 7, substr 15, prints 16, strsize 19,
+#               setbrush 29, doevents 35, timerset 36)
 def _derive_tjc_1_67_4():
     import copy
     base = next(e for e in all_instruction_sets if "tjc-1.65.5" in e["versions"] and 0 in e["models"])
     models = {}
-    for series in (0, 1):
+    for series, covx in ((0, 28), (1, 32)):
         m = copy.deepcopy(base["models"][series])
-        size4 = list(m["numerated_operators"][4]) + [None] * 29
-        size4[28] = "covx"
-        m["numerated_operators"][4] = size4[:max(29, len(m["numerated_operators"][4]))]
+        size4 = list(m["numerated_operators"][4]) + [None] * 33
+        for i in range(covx - 5, covx):      # between init and covx the list differs from 1.65.5, nothing there is verified
+            size4[i] = None
+        size4[covx] = "covx"
+        m["numerated_operators"][4] = size4[:covx + 1]
         models[series] = m
     m = copy.deepcopy(base["models"][100])
     ops8 = list(m["numerated_operators"][8])
     m["numerated_operators"][8] = ops8[:14] + [None] + ops8[14:]
-    m["numerated_operators"][4] = [{0: "i", 11: "page", 35: "covx"}.get(i) for i in range(36)]
+    verified4 = {0: "i", 1: "pic", 3: "ref", 4: "cir", 11: "page", 13: "fill", 21: "nstr", 23: "zstr", 24: "cirs", 29: "init",
+                 35: "covx"}
+    m["numerated_operators"][4] = [verified4.get(i) for i in range(36)]
     models[100] = m
     return {"versions": ["tjc-1.67.4"], "models": models, "priority": 10}
 
 
 all_instruction_sets.append(_derive_tjc_1_67_4())
+
+
+# nxt-1.65.1 series 0 (NX3224T028 of Gaggiuino_35, with its .HMI source): the generic list names covx at 27, the real number is 28
+# (`covx` 5 times in the source and in the decoded code), so one operator more than the generic list is in front of it. nstr 17
+# and zstr 19 were confirmed (same code as the F035 build); the names between zstr and covx are not verified.
+def _derive_nxt_1_65_1_series0():
+    import copy
+    base = next(e for e in all_instruction_sets if "nxt-1.65.1" in e["versions"] and 0 in e["models"])
+    model = copy.deepcopy(base["models"][0])
+    size4 = list(model["numerated_operators"][4]) + [None] * 2
+    for i in range(20, 28):
+        size4[i] = None
+    size4[28] = "covx"
+    model["numerated_operators"][4] = size4[:29]
+    return {"versions": ["nxt-1.65.1"], "models": {0: model}, "priority": 10}
+
+
+all_instruction_sets.append(_derive_nxt_1_65_1_series0())

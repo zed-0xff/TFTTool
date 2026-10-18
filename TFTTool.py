@@ -1841,6 +1841,17 @@ class TFTFile:
             lines.append(f"; {addr + i:06x}:  {' '.join(f'{c:02x}' for c in row):<47}  |{asc}|")
         return lines
 
+    # Names of the component attributes (those of the .HMI sources of the sample projects). The second table of the global data
+    # image is a sorted list of the CRC of attribute names; unlike component names they are hashed as they are, without padding.
+    _attributeNames = ("aph", "bco", "bco1", "bco2", "borderc", "borderw", "bpic", "buff", "buffsize", "ch", "close", "dez", "dir",
+                       "dis", "disup", "down", "drag", "effect", "en", "endx", "endy", "first", "font", "format", "from", "gdc",
+                       "gdh", "gdw", "groupid0", "groupid1", "h", "hig", "id", "inittrue", "isbr", "key", "left", "leftshow",
+                       "lenth", "lockobj", "loop", "maxval", "maxval_y", "minval", "mode", "molloc", "molloc_s", "movex", "movey",
+                       "objHig", "objWid", "objname", "path", "path_m", "pco", "pco0", "pco1", "pco2", "pco3", "pic", "pic1",
+                       "pic2", "picc", "picc1", "picc2", "pointer_l", "ppic", "psta", "pw", "qty", "right", "sendkey", "spax",
+                       "spay", "sta", "stim", "style", "tim", "time", "txt", "txt_maxl", "type", "up", "val", "val_y", "vid",
+                       "vscope", "vvs0", "vvs1", "vvs2", "vvs3", "w", "wid", "write", "ws0", "ws1", "x", "xcen", "y", "ycen")
+
     def _globalImageLines(self, gimg, pages, parsed):
         """Listing of the global data image (first usercode block) of a series 4 file. An address A of the code is at
         offset A + 40 of the image; the first 40 bytes are a header. Parts: the global variables, the structs of the
@@ -1885,7 +1896,7 @@ class TFTFile:
             st0 = mem + 40
             st = gimg[st0:st0 + size]
             od = {"type": o["type"], "id": o["id"], "mem": mem, "code": o["_type_code"]}
-            header, attrs, cov = self._describeStruct(od, st, gimg, -40)
+            header, attrs, cov = self._describeStruct(od, st, gimg, -40, True, True)
             lines += ["", f"; object at 0x{mem:x}: {o['type']} id {o['id']}{' ' + repr(po['name']) if po.get('name') else ''}"
                           f" (page {pn}), {size} bytes"]
             lines += self._structLines(st, st0, header, attrs, cov, False)
@@ -1914,9 +1925,11 @@ class TFTFile:
             for h, pn in sorted(ents, key=lambda e: e[1]):
                 lines.append(f";   {pn}: 0x{h:08x}{' ' + repr(names[pn]) if pn in names else ''}")
             lines.append("")
-        if hdr[8] and hdr[7] + hdr[8] <= len(gimg):
-            lines += [f"; second table, {hdr[8]} bytes at image offset 0x{hdr[7]:x}: 32-bit hashes (meaning not known)"]
-            lines += self._dumpLines(gimg[hdr[7]:hdr[7] + hdr[8]], hdr[7]) + [""]
+        if hdr[8] and hdr[7] + hdr[8] <= len(gimg) and hdr[8] % 4 == 0:
+            known = {Checksum().CRC(data=a.encode()): a for a in self._attributeNames}
+            hashes = struct.unpack_from(f"<{hdr[8] // 4}I", gimg, hdr[7])
+            lines += [f"; attribute name hash table, {len(hashes)} attributes (sorted CRC of the name, as it is)"]
+            lines += [f";   0x{h:08x} {known.get(h, '')}".rstrip() for h in hashes] + [""]
             covered.append((hdr[7], hdr[7] + hdr[8]))
         # everything else that is not zero
         mask = bytearray(len(gimg))
@@ -1970,9 +1983,10 @@ class TFTFile:
             lines.append("; " + TFTFile._formatAttrs(attrs))
         return lines + TFTFile._structDump(st, addr, covered, showHex)
 
-    def _describeStruct(self, o, st, blob, base, geometry=True):
-        """(header line, attributes, decoded byte ranges) of an object struct, see _objectBlocks."""
-        attrs = self._structAttributes(o["code"], st, blob, base)
+    def _describeStruct(self, o, st, blob, base, geometry=True, inImage=False):
+        """(header line, attributes, decoded byte ranges) of an object struct, see _objectBlocks. The layouts were found
+        for structs in a page's init block; in the global data image they are only valid for text and button objects."""
+        attrs = self._structAttributes(o["code"], st, blob, base) if not inImage or o["code"] in (0x74, 0x62) else None
         covered = self._structCovered(o["code"], st, o["mem"])
         if attrs is None:       # layout fields are only decoded when the struct passes the validity checks
             covered = [c for c in covered if c[0] == 0]
@@ -2125,12 +2139,25 @@ class TFTFile:
     # can only be recovered by guessing. Editor defaults (b0, t12, tm0, tc0, ...) and the words below are tried; more words
     # can be supplied with TFTFile.nameWords (command line: --names FILE, one name per line).
     _namePrefixes = ("b", "t", "n", "x", "j", "p", "m", "q", "g", "s", "c", "r", "va", "tm", "tc", "h", "ts", "tp", "sw",
-                     "bt", "tx", "pg", "page", "wifi", "file", "tool", "input", "temp")
+                     "bt", "tx", "pg", "page", "wifi", "file", "tool", "input", "temp", "exp", "gm")
     _nameWords = ("logo", "main", "menu", "home", "boot", "start", "print", "printing", "set", "setting", "settings",
                   "tool", "bed", "move", "fan", "led", "wifi", "lang", "language", "about", "info", "popup", "warn",
                   "error", "done", "finish", "pause", "resume", "stop", "tune", "temp", "status", "speed", "level",
                   "zoffset", "calibrate", "filament", "load", "unload", "preheat", "cooldown", "network", "system",
                   "version", "update", "reset", "confirm", "keyboard", "input", "numpad", "password", "file", "files")
+    # Names of components and pages of the Sovol SV08 Max firmware that were found by their hash (the names of the pages are the
+    # TJC_PAGE_* names of the stock client, lower case; some are spelled differently from the client).
+    _sovolWords = (
+                "auto_leveling", "b_fan0", "b_led", "bed_target", "check_status", "error_reset", "error_restart",
+                "error_tips", "eth0_ip", "exit", "export_failed", "export_succeed", "extru_target", "extrude_target",
+                "extrude_temp", "extruder_temp", "filament_error", "file_list", "filelist_init", "guide_language",
+                "guide_wifi", "heat_tip", "heating", "homing", "hot_bed_temp", "if_change", "if_delete1",
+                "if_delete2", "if_export", "if_reprint", "if_reset", "if_save", "if_stop", "if_update", "level_mode",
+                "load_begin", "load_clear", "load_clear2", "load_finish", "loading", "mks_test", "move_error",
+                "move_step", "no_filament", "no_udisk", "operate", "percent_step", "preview", "print_finish",
+                "saving", "show", "starting", "stoping", "test_vison", "timelapse_list", "unload_finish", "unloading",
+                "updating", "wifi_connect", "wifi_failed", "wifi_kb", "wifi_list", "wifi_scan", "wifi_succeed",
+                "wlan0_ip", "z_calibrating", "z_init", "zoffset_step", "material")
     nameWords = ()
 
     # Runtime object structs of series 4 (TJC, e.g. Sovol SV08 Max, QIDI): the init data block of a page starts with the
@@ -2139,7 +2166,8 @@ class TFTFile:
     # 99% of the objects):
     #   header (types with a struct of 52 bytes or more): +0 type, +1 id u16, +3 flags, +4 six event pointers, +28 own
     #           address, +34 aph, +40 x, y (i16), +44 w, h, +48 endx, endy
-    # then per type (name, offset, size): text 84 bytes, button 84 bytes, page 64 bytes, crop 64 bytes, video 104 bytes.
+    # structs of 28 bytes and more start with type, id, flags and the six event pointers (no aph / geometry below 52 bytes).
+    # then per type (name, offset, size) in _structLayouts; the struct sizes are in the table, from the distance of the addresses.
     # Text: the background field holds bco for sta 1 and the picture id for sta 0 / 2. Page: pic is only valid for sta 2.
     # The bytes +60 and +68 of buttons are constant in most objects and not named. A text pointer is the position of the
     # string in the block plus the block's base address.
@@ -2149,9 +2177,15 @@ class TFTFile:
         0x62: (84, (("borderc", 58, 2), ("picc", 62, 2), ("picc2", 64, 2), ("pco", 66, 2), ("xcen", 70, 1),
                     ("ycen", 71, 1), ("txt_maxl", 74, 2), ("txt", 76, 4), ("isbr", 80, 1))),
         0x79: (64, (("sta", 60, 2), ("pic", 62, 2))),
-        0x71: (64, (("picc", 56, 2),)),
-        0x02: (104, (("vid", 56, 2), ("en", 58, 1))),
+        0x71: (60, (("picc", 56, 2),)),
+        0x02: (104, (("vid", 56, 2), ("en", 58, 1), ("dis", 62, 1))),
         0x3c: (64, (("path", 60, 4),)),     # external picture: the path of the file, e.g. ram/176.jpg
+        0x36: (80, (("font", 61, 1), ("pco", 64, 2), ("xcen", 66, 1), ("ycen", 67, 1), ("val", 68, 4))),   # number
+        0x6a: (64, (("val", 58, 1), ("bco", 60, 2), ("pco", 62, 2))),                                        # progress bar
+        0x70: (60, (("pic", 56, 2),)),                                                                       # picture
+        0x3e: (116, (("font", 61, 1), ("txt_maxl", 70, 2))),                                                  # sliding text
+        0x33: (32, (("tim", 28, 2), ("en", 30, 1))),                                                         # timer
+        0x34: (16, (("sta", 4, 1), ("val", 12, 4))),                                                         # variable
     }
     _structHeaderSize = 52
 
@@ -2186,6 +2220,8 @@ class TFTFile:
         covered = []
         if len(st) >= cls._structHeaderSize and struct.unpack_from("<I", st, 28)[0] == mem:
             covered.append((0, cls._structHeaderSize))
+        elif 28 <= len(st) < cls._structHeaderSize and st[0] == code:
+            covered.append((0, 28))             # type, id, flags and the event pointers
         layout = cls._structLayouts.get(code)
         if layout and len(st) >= layout[0]:
             covered += [(off, off + size) for _, off, size in layout[1]]
@@ -2193,14 +2229,28 @@ class TFTFile:
 
     def _structHeader(self, o, st, geometry=True):
         """One line with the header fields of a struct (see above), or None if the struct has no such header."""
-        if len(st) < self._structHeaderSize or struct.unpack_from("<I", st, 28)[0] != o["mem"]:
+        full = len(st) >= self._structHeaderSize and struct.unpack_from("<I", st, 28)[0] == o["mem"]
+        if not full and not (28 <= len(st) < self._structHeaderSize and st[0] == o["code"]):
             return None
-        x, y, w, h, ex, ey = struct.unpack_from("<hhHHHH", st, 40)
         events = [f"{self._event_name(o['type'], i)}=0x{p:x}"
                   for i, p in enumerate(struct.unpack_from("<6I", st, 4)) if p != 0xffffffff]
-        return (f"flags=0x{st[3]:02x}, aph={st[34]}"
-                + (f", x={x}, y={y}, w={w}, h={h}, endx={ex}, endy={ey}" if geometry else "")
-                + (f", events: {', '.join(events)}" if events else ""))
+        line = f"flags=0x{st[3]:02x}"
+        if full:
+            x, y, w, h, ex, ey = struct.unpack_from("<hhHHHH", st, 40)
+            line += f", aph={st[34]}"
+            if geometry:
+                line += f", x={x}, y={y}, w={w}, h={h}, endx={ex}, endy={ey}"
+        return line + (f", events: {', '.join(events)}" if events else "")
+
+
+    @staticmethod
+    def _sampleNames():
+        """The names of the components and pages of the sample projects (names_samples.txt next to this file, one per line)."""
+        try:
+            with open(Path(__file__).with_name("names_samples.txt"), encoding="utf-8") as f:
+                return [ln.strip() for ln in f if ln.strip()]
+        except OSError:
+            return []
 
     def _nameTable(self):
         """Dictionary hash -> name for the names that can be guessed (see _namePrefixes)."""
@@ -2210,7 +2260,7 @@ class TFTFile:
             for i in range(300):
                 for name in (f"{p}{i}", f"{p}_{i}"):
                     table[crc(name)] = name
-        for w in tuple(self._nameWords) + tuple(self.nameWords):
+        for w in tuple(self._nameWords) + tuple(self._sovolWords) + tuple(self._sampleNames()) + tuple(self.nameWords):
             table[crc(w)] = w
         return table
 
@@ -2303,9 +2353,11 @@ class TFTFile:
                     if len(blob) >= 4 * len(mem) and list(struct.unpack_from(f"<{len(mem)}I", blob, 0)) == mem:
                         base = mem[0] - 4 * len(mem)
                         for i, o in enumerate(obj_list):
-                            size = (mem[i + 1] - mem[i]) if i + 1 < len(mem) else \
-                                self._structLayouts.get(o["_type_code"], (0,))[0]
-                            a = self._structAttributes(o["_type_code"], blob[mem[i] - base:mem[i] - base + size], blob, base)
+                            start = mem[i] - base
+                            size = self._structLayouts.get(o["_type_code"], (0,))[0]
+                            if not size or not 0 <= start <= len(blob) - size:     # no layout, or the struct is elsewhere
+                                continue
+                            a = self._structAttributes(o["_type_code"], blob[start:start + size], blob, base)
                             if a:
                                 struct_attrs[i] = a
                 except Exception:
@@ -2321,7 +2373,7 @@ class TFTFile:
                     st = gimg[st0:st0 + size]
                     if st[0] != o["_type_code"] or st[1] | (st[2] << 8) != o["id"]:
                         continue
-                    a = self._structAttributes(o["_type_code"], st, gimg, -40)
+                    a = self._structAttributes(o["_type_code"], st, gimg, -40) if o["_type_code"] in (0x74, 0x62) else None
                     if a:
                         struct_attrs[i] = a
             clean_objects = []
@@ -2401,6 +2453,51 @@ class TFTFile:
         self.header1.content["model_crc"] = self._modelCRCs[self._models.index(model)]
         self.header2.set_key(self._modelXORs[model])
         self.update_raw()
+
+    def setObjectGeometry(self, page, index, x, y, w, h):
+        """Moves / resizes an object of a series 4 file (e.g. the external picture of page 20 to the whole screen): writes
+        x, y, w, h, endx, endy into the object record and into the struct of the page's init block (or of the global data
+        image), then updates the checksums. Returns what was changed as a list of (where, old, new)."""
+        if self._getVal("model_series") != 4:
+            raise Exception("only series 4 files are supported")
+        parsed = self._parse_objects()
+        if not parsed or not 0 <= page < len(parsed) or not 0 <= index < len(parsed[page]):
+            raise Exception(f"no object {index} on page {page}")
+        obj = parsed[page][index]
+        new = struct.pack("<hhHHHH", x, y, w, h, (x + w - 1) & 0xffff, (y + h - 1) & 0xffff)
+        raw = bytearray(self.raw)
+        changed = []
+
+        def patch(where, off):
+            old = bytes(raw[off:off + 12])
+            raw[off:off + 12] = new
+            changed.append((where, struct.unpack("<hhHHHH", old), struct.unpack("<hhHHHH", new)))
+
+        # 1. the object record in the object table at the end of the file
+        before = sum(len(p) for p in parsed[:page]) + index
+        patch("object record", self._getVal("unknown_objects_address") + before * self.object_record_size + 40)
+        # 2. the struct: in the init data block of the page, or in the global data image
+        uc = self._getVal("usercode_address")
+        pg = self.getReadableData()["pages"][page]
+        done = False
+        for e in pg.get("init", []):
+            blob = bytes.fromhex(e.get("hex", ""))
+            mem = [o["_mem"] for o in parsed[page]]
+            if len(blob) >= 4 * len(mem) and list(struct.unpack_from(f"<{len(mem)}I", blob, 0)) == mem:
+                base = mem[0] - 4 * len(mem)
+                if base <= obj["_mem"] < base + len(blob):
+                    patch("struct in the init block", uc + int(e["offset"], 16) + 4 + obj["_mem"] - base + 40)
+                    done = True
+                break
+        if not done:        # objects with ids >= 256: the struct is in the global data image, address A at offset A + 40
+            gaddr = max(sorted(self.usercode.blocks)[:4], key=lambda a: len(self.usercode.blocks[a].raw))
+            start = uc + gaddr + 4 + obj["_mem"] + 40
+            if raw[start] != obj["_type_code"] or raw[start + 1] | (raw[start + 2] << 8) != obj["id"]:
+                raise Exception("struct of the object not found")
+            patch("struct in the global data image", start + 40)
+        self.raw = bytes(raw)
+        self.update_raw()
+        return changed
 
     def update_raw(self):
         # Convert modified headers back to raw, which also updates the header checksums

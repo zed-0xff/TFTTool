@@ -50,12 +50,14 @@ class InstructionLookup(unittest.TestCase):
         self.assertEqual(ops[8][48], "doevents")
 
     def test_series_is_preferred_over_version(self):
-        # nxt-1.65.1 exists as a generic set and as an F series (100) override: series 0 must get the generic one
+        # nxt-1.65.1 has sets for series 0, 100 and 3: each series must get its own
         generic = fake_file("N", 1, 65, 1, 0)._find_instructions()
         f100 = fake_file("N", 1, 65, 1, 100)._find_instructions()
         shared = next(e for e in T.all_instruction_sets if "nxt-1.63.1" in e["versions"])
-        self.assertIs(generic, shared["models"][0])
-        self.assertEqual(f100["numerated_operators"][4][34], "covx")
+        self.assertEqual(generic["numerated_operators"][4][28], "covx")      # series 0: covx is 28, the generic list says 27
+        self.assertEqual(generic["numerated_operators"][4][17], "nstr")
+        self.assertIsNot(generic, shared["models"][100])
+        self.assertEqual([f100["numerated_operators"][4][i] for i in (20, 21, 22, 34)], ["nstr", "xstr", "zstr", "covx"])
         self.assertIsNot(f100, shared["models"][100])
 
     def test_verified_tables_nxt_1_68_2(self):
@@ -137,3 +139,16 @@ class ComponentNames(unittest.TestCase):
         f.nameWords = ("kobold",)
         h = T.Checksum().CRC(data=b"kobold".ljust(14, b"\0"))
         self.assertEqual(f._nameTable()[h], "kobold")
+
+    def test_attribute_name_hash(self):
+        # the sorted hash table of the global image of the Sovol file: CRC of the attribute name as it is (not padded)
+        for name, h in (("x", 0x01b82d24), ("y", 0x05793093), ("bco", 0xf29094d8), ("id", 0xdbee6968), ("pco", 0x0a15c67e)):
+            self.assertEqual(T.Checksum().CRC(data=name.encode()), h, name)
+        self.assertIn("txt_maxl", T.TFTFile._attributeNames)
+
+    def test_sovol_names_and_default_prefixes(self):
+        f = T.TFTFile.__new__(T.TFTFile)
+        table = f._nameTable()
+        crc = lambda n: T.Checksum().CRC(data=n.encode().ljust(14, b"\0"))
+        for name in ("wifi_connect", "extruder_temp", "exp3", "gm0", "main"):
+            self.assertEqual(table[crc(name)], name)

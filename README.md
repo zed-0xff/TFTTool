@@ -150,10 +150,30 @@ The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/font
 * `tools/fw_tables.py`: reads the two instruction tables (long: commands with a string operand, short: the fixed size ones) and the
   names of the undocumented operator 47 / 48 functions (`ramv`, `ramw`, `uart2`, `flashup`, ...) out of an unscrambled firmware image. The positions of the long
   table equal TFTTool's operator numbers of class 8, the short table does not equal class 4 (see the docstring).
+* `tools/screen_bridge.py` (needs `pyserial`, `Pillow`): prototype that mirrors a picture source onto the screen and returns its touch panel as
+  pointer events: frames are 480x272 JPEGs turned by 180 degrees, sent with `twfile` at 921600 baud and shown with `ref exp0` of the
+  patched `.tft` (`patch_tft.py ... --page 20 --object 10 --geometry 0,0,480,272`), a fast frame first and a finer one when nothing changes,
+  nothing for an unchanged frame; the finger is followed with `tch0` / `tch1` (about 30 position changes a second). Sources: picture files
+  (run on the real screen) and an X display through python-xlib (`--source x`, written, **not run yet**).
+* `tools/fw_pack.py` + `tools/sdboot.S`: builds `TFWriter_AiHmiT7.bin.make`, the file the stage 0 loader runs from the root of an SD
+  card before it ever touches the flash (format in `tools/fw_unscramble.py`, inverted). `fw_pack.py sdboot --stock app_10000_plain.bin`
+  makes a file that copies the stock firmware to RAM and starts it exactly like the loader starts a flash image - nothing on the
+  screen changes, and if the loader's own checks fail for any reason it falls back to booting from flash as usual (remove the card,
+  power cycle). This is the safe way to try a patched firmware: patch `--stock`, nothing is written to the flash until it works.
+* `sovol/commands.md`: every serial command and system variable this firmware (159) knows — the documented Nextion/TJC
+  instruction set plus the 36 hidden functions reached through `sets "name: args"`/`gets "name"` (`ramv`, `flashup`, `cpufreq`, ...),
+  each tagged with how sure we are about it (tested here / editor’s own description / inferred from the firmware / undocumented).
 * `sovol/flash_layout.md`: what is where in the 16 MiB SPI flash of the stock Sovol SV08 Max screen (boot loader, firmware image
   container and its XOR / CRC scheme, settings blocks, the `.tft` and its resources), how it was dumped and how to cut the pieces out.
 * `sovol/widget_map.py`: joins the decoded Sovol `.tft` with the host handlers of the stock client source (`ui.h` / `ui.cpp`,
   not included) into a page-to-widget map; the result for the stock firmware is `sovol/widget_map.md`.
+
+### Header field names
+The fields of header 1 / 2 carry the names of the editor's own structures where they are known (comments in `TFTTool.py`; `appinf0` /
+`appinf1` of the editor source in `ext/HMI`): `old_firmware_*` (gujian), `driver_*` (LCD driver blob), `hex_*` (embedded image),
+`encode_start`, `pages_address` / `objects_address` / `objects_count`, `encode`. Older versions of this tool called them
+`unknown_old_firmware_address`, `unknown_old_stm32_lcddriver_address`, `unknown_stm32_binary_*`, `unknown_pages_address`, ... (the JSON
+keys of `headers/header1.json` and `header2.json` changed accordingly).
 
 ### Component names
 The names of components and pages are stored only as hashes (CRC of the name padded with zero bytes to 14 bytes, see nxt-doc

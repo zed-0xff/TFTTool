@@ -1,0 +1,791 @@
+{
+  "model": "Unknown display model",
+  "editor": "tjc-1.65.5",
+  "resolution": [
+    480,
+    272
+  ],
+  "orientation": 0,
+  "char_encoding": "utf-8",
+  "pages_count": 67,
+  "objects_count": 740,
+  "pictures_count": 88,
+  "fonts_count": 3,
+  "usercode_address": "0x840000",
+  "usercode_size": 273368,
+  "pages": [
+    {
+      "page": 0,
+      "name": "logo",
+      "objects": 1,
+      "host_widgets": []
+    },
+    {
+      "page": 1,
+      "name": "starting",
+      "objects": 2,
+      "host_widgets": []
+    },
+    {
+      "page": 2,
+      "name": "mks_test",
+      "objects": 24,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "page": 3,
+      "name": "error_restart",
+      "objects": 4,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 4,
+      "name": "error_reset",
+      "objects": 3,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 5,
+      "name": "error_tips",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 6,
+      "name": "guide_language",
+      "objects": 13,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "page": 7,
+      "name": "guide_wifi",
+      "objects": 25,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "page": 8,
+      "name": null,
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 9,
+      "name": "if_reprint",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 10,
+      "name": "main",
+      "objects": 16,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        100,
+        101,
+        102,
+        103
+      ]
+    },
+    {
+      "page": 11,
+      "name": "file_list",
+      "objects": 49,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        100,
+        101,
+        102,
+        103,
+        110,
+        111,
+        112
+      ]
+    },
+    {
+      "page": 12,
+      "name": "filelist_init",
+      "objects": 11,
+      "host_widgets": [
+        100,
+        101,
+        102,
+        103,
+        110,
+        111,
+        112
+      ]
+    },
+    {
+      "page": 13,
+      "name": "no_udisk",
+      "objects": 11,
+      "host_widgets": [
+        100,
+        101,
+        102,
+        103,
+        110,
+        111,
+        112
+      ]
+    },
+    {
+      "page": 14,
+      "name": "if_delete1",
+      "objects": 7,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 15,
+      "name": "timelapse_list",
+      "objects": 27,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        100,
+        101,
+        102,
+        103,
+        110,
+        111,
+        112
+      ]
+    },
+    {
+      "page": 16,
+      "name": "if_export",
+      "objects": 7,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 17,
+      "name": "export_succeed",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 18,
+      "name": "export_failed",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 19,
+      "name": "if_delete2",
+      "objects": 7,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 20,
+      "name": "preview",
+      "objects": 18,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        100,
+        101,
+        102,
+        103,
+        110,
+        111,
+        112
+      ]
+    },
+    {
+      "page": 21,
+      "name": "printing",
+      "objects": 25,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "page": 22,
+      "name": "operate",
+      "objects": 29,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        15
+      ]
+    },
+    {
+      "page": 23,
+      "name": "if_change",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 24,
+      "name": "filament_error",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 25,
+      "name": "unloading",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 26,
+      "name": "unload_finish",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 27,
+      "name": "load_begin",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 28,
+      "name": "no_filament",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 29,
+      "name": "loading",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 30,
+      "name": "load_finish",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 31,
+      "name": "load_clear",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 32,
+      "name": "if_stop",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 33,
+      "name": "stoping",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 34,
+      "name": "if_save",
+      "objects": 7,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 35,
+      "name": "saving",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 36,
+      "name": "print_finish",
+      "objects": 10,
+      "host_widgets": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "page": 37,
+      "name": "move",
+      "objects": 28,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        100,
+        101,
+        102,
+        103,
+        120,
+        121,
+        122
+      ]
+    },
+    {
+      "page": 38,
+      "name": "move_error",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 39,
+      "name": "homing",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 40,
+      "name": "filament",
+      "objects": 21,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        100,
+        101,
+        102,
+        103,
+        120,
+        121,
+        122
+      ]
+    },
+    {
+      "page": 41,
+      "name": "keyboard",
+      "objects": 26,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 42,
+      "name": "heat_tip",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 43,
+      "name": null,
+      "objects": 5,
+      "host_widgets": []
+    },
+    {
+      "page": 44,
+      "name": null,
+      "objects": 5,
+      "host_widgets": []
+    },
+    {
+      "page": 45,
+      "name": "fan",
+      "objects": 19,
+      "host_widgets": [
+        0,
+        2,
+        3,
+        100,
+        101,
+        102,
+        103,
+        120,
+        121,
+        122
+      ]
+    },
+    {
+      "page": 46,
+      "name": "heating",
+      "objects": 6,
+      "host_widgets": []
+    },
+    {
+      "page": 47,
+      "name": "load_clear2",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 48,
+      "name": "system",
+      "objects": 29,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        100,
+        101,
+        102,
+        103,
+        130,
+        131,
+        132
+      ]
+    },
+    {
+      "page": 49,
+      "name": "language",
+      "objects": 19,
+      "host_widgets": [
+        6,
+        100,
+        101,
+        102,
+        103,
+        130,
+        131,
+        132
+      ]
+    },
+    {
+      "page": 50,
+      "name": "if_reset",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 51,
+      "name": "if_update",
+      "objects": 6,
+      "host_widgets": [
+        0,
+        1
+      ]
+    },
+    {
+      "page": 52,
+      "name": "updating",
+      "objects": 7,
+      "host_widgets": []
+    },
+    {
+      "page": 53,
+      "name": "about",
+      "objects": 8,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 54,
+      "name": "wifi_scan",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 55,
+      "name": "wifi_list",
+      "objects": 33,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        100,
+        101,
+        102,
+        103,
+        130,
+        131,
+        132
+      ]
+    },
+    {
+      "page": 56,
+      "name": "wifi_kb",
+      "objects": 46,
+      "host_widgets": [
+        1,
+        2
+      ]
+    },
+    {
+      "page": 57,
+      "name": "wifi_connect",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 58,
+      "name": "wifi_succeed",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 59,
+      "name": "wifi_failed",
+      "objects": 5,
+      "host_widgets": [
+        0
+      ]
+    },
+    {
+      "page": 60,
+      "name": "level_mode",
+      "objects": 17,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        100,
+        101,
+        102,
+        103,
+        130,
+        131,
+        132
+      ]
+    },
+    {
+      "page": 61,
+      "name": "z_calibrating",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 62,
+      "name": null,
+      "objects": 8,
+      "host_widgets": []
+    },
+    {
+      "page": 63,
+      "name": "z_init",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 64,
+      "name": "zoffset",
+      "objects": 13,
+      "host_widgets": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "page": 65,
+      "name": null,
+      "objects": 6,
+      "host_widgets": []
+    },
+    {
+      "page": 66,
+      "name": "auto_leveling",
+      "objects": 4,
+      "host_widgets": []
+    }
+  ],
+  "resources": [
+    {
+      "slot": 0,
+      "kind": "bootloader0",
+      "offset": 131216,
+      "size": 17570
+    },
+    {
+      "slot": 1,
+      "kind": "bootloader1",
+      "offset": 148786,
+      "size": 209208
+    },
+    {
+      "slot": 7,
+      "kind": "pictures",
+      "offset": 357994,
+      "size": 568939
+    },
+    {
+      "slot": 8,
+      "kind": "fonts",
+      "offset": 926933,
+      "size": 7656299
+    },
+    {
+      "slot": 9,
+      "kind": "gmovs",
+      "offset": 8583232,
+      "size": 42368
+    }
+  ],
+  "checksums": {
+    "header1": {
+      "stored": "0x07c11451",
+      "computed": "0x07c11451",
+      "ok": true
+    },
+    "header2": {
+      "stored": "0x7047847f",
+      "computed": "0x7047847f",
+      "ok": true
+    },
+    "resources": {
+      "stored": "0xc2128007",
+      "computed": "0xc2128007",
+      "ok": true
+    },
+    "file": {
+      "stored": "0x0aacb72f",
+      "computed": "0x0aacb72f",
+      "ok": true
+    }
+  },
+  "header2_note": "layout=ext, learned key=0xf3d2481f, validation 6/6",
+  "files": {
+    "headers": [
+      "header1.json",
+      "header2.json"
+    ],
+    "pages": 67,
+    "flat_block_files": 0,
+    "pictures": 88
+  }
+}

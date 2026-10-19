@@ -144,6 +144,14 @@ The glyph atlases are written by default (`--no-glyphs` skips them): `fonts/font
 * `tools/screen_probe.py` (needs `pyserial`): probes a Nextion / TJC serial screen (`scan` for baud rate and model, `touch`
   for `sendxy` touch frames, `draw` for the stock drawing commands, `upload` for timed `twfile` JPEG uploads, `raw`, and `flash`,
   which verifies the `.tft` checksums with this tool before writing it with `whmi-wri`; `bench` measures the draw command rate, optionally at a higher baud rate). Run with `--help`.
+* `tools/fw_unscramble.py`: unscrambles a firmware image of the screen (the `.make` update files, or an image inside a dump of the
+  screen's SPI flash, `--offset`): the stock loader XORs it with a key that is in its own header and checks two CRCs of the chip's
+  hardware CRC unit (format in the script's docstring); it verifies both.
+* `tools/fw_tables.py`: reads the two instruction tables (long: commands with a string operand, short: the fixed size ones) and the
+  names of the undocumented operator 47 / 48 functions (`ramv`, `ramw`, `uart2`, `flashup`, ...) out of an unscrambled firmware image. The positions of the long
+  table equal TFTTool's operator numbers of class 8, the short table does not equal class 4 (see the docstring).
+* `sovol/flash_layout.md`: what is where in the 16 MiB SPI flash of the stock Sovol SV08 Max screen (boot loader, firmware image
+  container and its XOR / CRC scheme, settings blocks, the `.tft` and its resources), how it was dumped and how to cut the pieces out.
 * `sovol/widget_map.py`: joins the decoded Sovol `.tft` with the host handlers of the stock client source (`ui.h` / `ui.cpp`,
   not included) into a page-to-widget map; the result for the stock firmware is `sovol/widget_map.md`.
 

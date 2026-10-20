@@ -488,38 +488,794 @@ class TFTFile:
         "start":   0x00,
         "hasCRC":  True,
         "content": {
-            "old_lcd_orientation":                  {"struct": "B", "val": 0}, # editor fixes this to 0
-            "editor_version_main":                  {"struct": "B", "val": 0},
-            "editor_version_sub":                   {"struct": "B", "val": 0},
-            "editor_vendor":                        {"struct": "B", "val": 0},
-            "unknown_old_firmware_address":         {"struct": "I", "val": 0},
-            "unknwon_old_firmware_size":            {"struct": "I", "val": 0},
-            "old_lcd_resolution_width":             {"struct": "H", "val": 0}, # always largest resolution
-            "old_lcd_resolution_height":            {"struct": "H", "val": 0}, # always smallest resolution
-            "lcd_resolution_x":                     {"struct": "H", "val": 0}, # x-resolution in current orientation (cf ui_orientation)
-            "lcd_resolution_y":                     {"struct": "H", "val": 0}, # y-resolution in current orientation (cf ui_orientation)
-            "ui_orientation":                       {"struct": "B", "val": 0},
-            "model_series":                         {"struct": "B", "val": 0}, # 0=T0, 1=K0, 2=X3, 3=X5, 100=T1
-            "unknown_otp":                          {"struct": "B", "val": 0},
-            "editor_version_bugfix":                {"struct": "B", "val": 3},
-            "unknown_stm32_lcddriver_address":      {"struct": "I", "val": 0},
-            "unknown_res1":                         {"struct": "H", "val": 0},
-            "unknown_old_stm32_lcddriver_address":  {"struct": "I", "val": 0},
-            "unknown_stm32_lcddriver_size":         {"struct": "I", "val": 0},
-            "unknown_stm32_binary_address":         {"struct": "I", "val": 0},
-            "unknown_stm32_binary_size":            {"struct": "I", "val": 0},
-            "model_crc":                            {"struct": "I", "val": 0},
-            "file_version":                         {"struct": "B", "val": 0},
-            "unknown_encode_start":                 {"struct": "B", "val": 0},
-            "ressources_files_address":             {"struct": "I", "val": 0},
-            "ressources_files_count":               {"struct": "I", "val": 0},
-            "file_size":                            {"struct": "I", "val": 0},
-            "ressource_files_size":                 {"struct": "I", "val": 0},
-            "ressource_files_crc":                  {"struct": "I", "val": 0},
-            "unknown_memory_fs_size":               {"struct": "I", "val": 0},
-            "unknown_next_file_address":            {"struct": "I", "val": 0},
-            "unknown_file_id":                      {"struct": "I", "val": 0},
-            "unknown_metadata_size":                {"struct": "I", "val": 0},
+            "old_lcd_orientation":              {"struct": "B", "val": 0},  # old_lcddire, the editor fixes this to 0
+            "editor_version_main":              {"struct": "B", "val": 0},  # banbenh
+            "editor_version_sub":               {"struct": "B", "val": 0},  # banbenl
+            "editor_vendor":                    {"struct": "B", "val": 0},  # mark (hmibiaoshiH, 'T' or 'N')
+            "old_firmware_address":             {"struct": "I", "val": 0},  # oldgujianadd (gujian = firmware)
+            "old_firmware_size":                {"struct": "I", "val": 0},  # oldgujianqyt
+            "old_lcd_resolution_width":         {"struct": "H", "val": 0},  # always largest resolution (old_screenw)
+            "old_lcd_resolution_height":        {"struct": "H", "val": 0},  # always smallest resolution (old_screenh)
+            "lcd_resolution_x":                 {"struct": "H", "val": 0},  # x-resolution in current orientation (cf ui_orientation), lcdscreenw
+            "lcd_resolution_y":                 {"struct": "H", "val": 0},  # y-resolution in current orientation (cf ui_orientation), lcdscreenh
+            "ui_orientation":                   {"struct": "B", "val": 0},  # guidire
+            "model_series":                     {"struct": "B", "val": 0},  # xilie: 0=T0, 1=K0, 2=X3, 3=X5, 100=T1
+            "unknown_otp":                      {"struct": "B", "val": 0},  # in the old editor the 8 bytes from here are syscomadd / syscomqyt (syscom.bin address and size)
+            "editor_version_bugfix":            {"struct": "B", "val": 3},
+            "unknown_stm32_lcddriver_address":  {"struct": "I", "val": 0},
+            "unknown_res1":                     {"struct": "H", "val": 0},
+            "driver_address":                   {"struct": "I", "val": 0},  # driveradd: the LCD driver blob (cd<series>.dll in the editor); 0 in files with resource slots
+            "driver_size":                      {"struct": "I", "val": 0},  # driverqyt
+            "hex_address":                      {"struct": "I", "val": 0},  # hexaddr: the embedded 'hex' image (asp<series>.dll); 0 in files with resource slots
+            "hex_size":                         {"struct": "I", "val": 0},  # hexlenth
+            "model_crc":                        {"struct": "I", "val": 0},  # Modelcrc; also the seed of the header 2 key (header2KeyFromModelCRC)
+            "file_version":                     {"struct": "B", "val": 0},  # filever
+            "encode_start":                     {"struct": "B", "val": 0},  # encodeh_star: first code of the project encoding table (codeh_star)
+            "ressources_files_address":         {"struct": "I", "val": 0},
+            "ressources_files_count":           {"struct": "I", "val": 0},
+            "file_size":                        {"struct": "I", "val": 0},  # datasize of the old editor (it adds the 4 bytes of the file checksum)
+            "ressource_files_size":             {"struct": "I", "val": 0},
+            "ressource_files_crc":              {"struct": "I", "val": 0},
+            "unknown_memory_fs_size":           {"struct": "I", "val": 0},
+            "unknown_next_file_address":        {"struct": "I", "val": 0},
+            "unknown_file_id":                  {"struct": "I", "val": 0},
+            "unknown_metadata_size":            {"struct": "I", "val": 0},
+        },
+    }
+    def __init__(self, raw:bytes, properties:dict, decode_hint:int=0):
+        self.size    = properties["size"]
+        self.start   = properties["start"]
+        self.hasCRC  = properties["hasCRC"]
+        self.content = pdict(properties["content"])
+
+        # Read content.
+        self._contentStruct = "<" + "".join(v["struct"] for v in self.content.values())
+        self._contentSize = struct.calcsize(self._contentStruct)
+        self._emptyRegion = self.size - self._contentSize
+        if self.hasCRC:
+            self._emptyRegion -= 4
+        if self._emptyRegion < 0:
+            raise Exception("Header size mismatch")
+        if len(raw) < self.size:
+            raise Exception("raw size smaller than header")
+
+        fullStruct = self._contentStruct + str(self._emptyRegion) + "x"
+        if self.hasCRC:
+            fullStruct += "I"
+
+        # Now that the structure has been parsed from the content dict, convert it to a flat, "normal" k:v dict and
+        # initialize it with the given default values.
+        for k, v in self.content.items():
+            self.content[k] = v["val"]
+
+        data = raw[self.start: (self.start + self.size)]
+
+        # XOR decoding. By default the key does nothing.
+        self.key = bytes(len(raw))
+        self.encrypted = False
+        if type(decode_hint) is int:
+            self.set_key(decode_hint)
+            # only decode the part that actually contains encoded data. Copy the rest as-is.
+            data = bytes([b ^ self.key[i] for i, b in enumerate(data[:self._contentSize])]) + data[self._contentSize:]
+            data = struct.unpack(fullStruct, data)
+            for i, k in enumerate(self.content.keys()):
+                self.content[k] = data[i]
+            if self.hasCRC:
+                self.crc = data[-1]
+        # (partially) decoded header. In this case we ignore the data from raw.
+        elif type(decode_hint) is str:
+            # String can be hex data ("01 3a 44 [...]"), a json with values, or a file path to either one.
+            # Check if it's a file path. If so, replace the hint with the file content.
+            try:
+                with open(decode_hint) as f:
+                    decode_hint = f.read()
+            except OSError:
+                pass
+            data = None
+            # Check if it's a hex string...
+            try:
+                data = bytes.fromhex(decode_hint)
+            except ValueError:
+                pass
+            if data:
+                data = struct.unpack_from(self._contentStruct, data, 0)
+                for i, k in enumerate(self.content.keys()):
+                    self.content[k] = data[i]
+            # ... else check if it's a json string...
+            else:
+                try:
+                    # Double quotes get removed from the CLI if not escaped. Single quotes work, but the json parser
+                    # doesn't like them.
+                    data = json.loads(decode_hint.replace("\'", "\""))
+                except json.decoder.JSONDecodeError:
+                    pass
+                if data:
+                    # Skip all unknown keys.
+                    for k, v in data.items():
+                        if k in self.content:
+                            if type(v) is int:
+                                self.content[k] = v
+                            else:
+                                try:
+                                    self.content[k] = int(v, 16)
+                                except:
+                                    try:
+                                        self.content[k] = int(v, 2)
+                                    except:
+                                        self.content[k] = int(v)
+
+            # Update CRC. This requires serializing the data. Both things are done by getRaw
+            # even though we don't use or need the actual raw version of the header.
+            self.getRaw()
+
+    def set_key(self, key):
+        if type(key) is int:
+            if key:
+                self.encrypted = True
+            else:
+                self.encrypted = False
+            self.key = struct.pack("<I", key)
+            self.key = self.key * (self.size // len(self.key) + 1)
+        elif type(key) in (bytes, bytearray):
+            self.encrypted = False
+            for b in key:
+                if b:
+                    self.encrypted = True
+                    break
+            self.key = key
+        else:
+            raise Exception(f"Key has unknown type: {key} (type: {type(key)})")
+
+    def getRaw(self):
+        raw = struct.pack(self._contentStruct, *self.content.values())
+        if self.encrypted:
+            raw = bytes([b ^ self.key[i] for i, b in enumerate(raw)])
+        raw += b"\xff" * self._emptyRegion
+        if self.hasCRC:
+            self.crc = Checksum().CRC(data=raw)
+            raw += struct.pack("<I", self.crc)
+        return raw
+
+
+class TFTFile:
+
+    _nextion_type_names = {
+        0x79: "page",           # page
+        0x74: "text",           # t
+        0x37: "scrolling_text", # g
+        0x36: "number",         # n
+        0x3B: "xfloat",         # x
+        0x62: "button",         # b
+        0x35: "dual_state",     # bt
+        0x01: "slider",         # h
+        0x6A: "progress_bar",   # j
+        0x71: "crop",           # q
+        0x70: "picture",        # p
+        0x00: "waveform",       # s
+        0x7A: "gauge",          # z
+        0x33: "timer",          # tm
+        0x34: "variable",       # va
+        0x38: "checkbox",       # c
+        0x39: "radio",          # r
+        0x6D: "hotspot",        # m
+        0x3A: "qrcode",         # qr
+        0x05: "touchcap",       # tc
+    }
+
+    _modelXORs = {
+         "NX3224T024_011": 0x6d713e32,
+         "NX3224T028_011": 0x965cdd00,
+         "NX4024T032_011": 0x3b91869c,
+         "NX4832T035_011": 0xebab2932,
+         "NX4827T043_011": 0x1eb276b6,
+         "NX8048T050_011": 0x3b66b524,
+         "NX8048T070_011": 0xc079789d,
+
+         "NX3224F024_011": 0,
+         "NX3224F028_011": 0,
+         "NX4832F035_011": 0,
+
+         "NX3224K024_011": 0x1324a9d7,
+         "NX3224K028_011": 0xe8094ae5,
+         "NX4024K032_011": 0x45c41179,
+         "NX4832K035_011": 0x95febed7,
+         "NX4827K043_011": 0x60e7e153,
+         "NX8048K050_011": 0x453322c1,
+         "NX8048K070_011": 0xbe2cef78,
+
+         "NX4827P043_011": 0xcdc7c258,
+         "NX8048P050_011": 0xe81301ca,
+         "NX8048P070_011": 0x130ccc73,
+         "NX1060P070_011": 0x18a58690,
+         "NX1060P101_011": 0xdcb511f5,
+
+        "TJC3224T022_011": 0x189a66fb,
+        "TJC3224T024_011": 0x54cd4ea3,
+        "TJC3224T028_011": 0xafe0ad91,
+        "TJC4024T032_011": 0x022df60d,
+        "TJC4832T035_011": 0xd21759a3,
+        "TJC4827T043_011": 0x270e0627,
+        "TJC8048T050_011": 0x02dac5b5,
+        "TJC8048T070_011": 0xf9c5080c,
+
+        "TJC1612T118_011": 0,
+        "TJC3224T122_011": 0,
+        "TJC3224T124_011": 0,
+        "TJC3224T128_011": 0,
+        "TJC4024T132_011": 0,
+        "TJC4832T135_011": 0,
+
+        "TJC3224K022_011": 0x66cff11e,
+        "TJC3224K024_011": 0x2a98d946,
+        "TJC3224K028_011": 0xd1b53a74,
+        "TJC4024K032_011": 0x7c7861e8,
+        "TJC4827K043_011": 0x595b91c2,
+        "TJC4832K035_011": 0xac42ce46,
+        "TJC8048K050_011": 0x7c8f5250,
+        "TJC8048K070_011": 0x87909fe9,
+
+        "TJC4848X340_011": 0x9ea280d2,
+        "TJC4827X343_011": 0x767c3bae,
+        "TJC8048X343_011": 0x5eb5f196,
+        "TJC8048X350_011": 0x53a8f83c,
+        "TJC8048X370_011": 0xa8b73585,
+        "TJC1060X370_011": 0xa31e7f66,
+        "TJC8060X380_011": 0xd9b92b5c,
+        "TJC1060X3A1_011": 0x2c3a9902,
+
+        "TJC4848X540_011": 0x8e472af9,
+        "TJC4827X543_011": 0x66999185,
+        "TJC8048X543_011": 0x4e505bbd,
+        "TJC8048X550_011": 0x434d5217,
+        "TJC8048X570_011": 0xb8529fae,
+        "TJC1060X570_011": 0xb3fbd54d,
+        "TJC8060X580_011": 0xc95c8177,
+        "TJC1060X5A1_011": 0x3cdf3329,
+    }
+    _models = list(_modelXORs.keys())
+    _modelCRCs = [Checksum().CRC(data=m.encode("ascii")) for m in _models]
+
+    _fileHeader1 = {
+        "size":    0xc8,
+        "start":   0x00,
+        "hasCRC":  True,
+        "content": {
+            "old_lcd_orientation":              {"struct": "B", "val": 0},  # old_lcddire, the editor fixes this to 0
+            "editor_version_main":              {"struct": "B", "val": 0},  # banbenh
+            "editor_version_sub":               {"struct": "B", "val": 0},  # banbenl
+            "editor_vendor":                    {"struct": "B", "val": 0},  # mark (hmibiaoshiH, 'T' or 'N')
+            "old_firmware_address":             {"struct": "I", "val": 0},  # oldgujianadd (gujian = firmware)
+            "old_firmware_size":                {"struct": "I", "val": 0},  # oldgujianqyt
+            "old_lcd_resolution_width":         {"struct": "H", "val": 0},  # always largest resolution (old_screenw)
+            "old_lcd_resolution_height":        {"struct": "H", "val": 0},  # always smallest resolution (old_screenh)
+            "lcd_resolution_x":                 {"struct": "H", "val": 0},  # x-resolution in current orientation (cf ui_orientation), lcdscreenw
+            "lcd_resolution_y":                 {"struct": "H", "val": 0},  # y-resolution in current orientation (cf ui_orientation), lcdscreenh
+            "ui_orientation":                   {"struct": "B", "val": 0},  # guidire
+            "model_series":                     {"struct": "B", "val": 0},  # xilie: 0=T0, 1=K0, 2=X3, 3=X5, 100=T1
+            "unknown_otp":                      {"struct": "B", "val": 0},  # in the old editor the 8 bytes from here are syscomadd / syscomqyt (syscom.bin address and size)
+            "editor_version_bugfix":            {"struct": "B", "val": 3},
+            "unknown_stm32_lcddriver_address":  {"struct": "I", "val": 0},
+            "unknown_res1":                     {"struct": "H", "val": 0},
+            "driver_address":                   {"struct": "I", "val": 0},  # driveradd: the LCD driver blob (cd<series>.dll in the editor); 0 in files with resource slots
+            "driver_size":                      {"struct": "I", "val": 0},  # driverqyt
+            "hex_address":                      {"struct": "I", "val": 0},  # hexaddr: the embedded 'hex' image (asp<series>.dll); 0 in files with resource slots
+            "hex_size":                         {"struct": "I", "val": 0},  # hexlenth
+            "model_crc":                        {"struct": "I", "val": 0},  # Modelcrc; also the seed of the header 2 key (header2KeyFromModelCRC)
+            "file_version":                     {"struct": "B", "val": 0},  # filever
+            "encode_start":                     {"struct": "B", "val": 0},  # encodeh_star: first code of the project encoding table (codeh_star)
+            "ressources_files_address":         {"struct": "I", "val": 0},
+            "ressources_files_count":           {"struct": "I", "val": 0},
+            "file_size":                        {"struct": "I", "val": 0},  # datasize of the old editor (it adds the 4 bytes of the file checksum)
+            "ressource_files_size":             {"struct": "I", "val": 0},
+            "ressource_files_crc":              {"struct": "I", "val": 0},
+            "unknown_memory_fs_size":           {"struct": "I", "val": 0},
+            "unknown_next_file_address":        {"struct": "I", "val": 0},
+            "unknown_file_id":                  {"struct": "I", "val": 0},
+            "unknown_metadata_size":            {"struct": "I", "val": 0},
+        },
+    }
+    def __init__(self, raw:bytes, properties:dict, decode_hint:int=0):
+        self.size    = properties["size"]
+        self.start   = properties["start"]
+        self.hasCRC  = properties["hasCRC"]
+        self.content = pdict(properties["content"])
+
+        # Read content.
+        self._contentStruct = "<" + "".join(v["struct"] for v in self.content.values())
+        self._contentSize = struct.calcsize(self._contentStruct)
+        self._emptyRegion = self.size - self._contentSize
+        if self.hasCRC:
+            self._emptyRegion -= 4
+        if self._emptyRegion < 0:
+            raise Exception("Header size mismatch")
+        if len(raw) < self.size:
+            raise Exception("raw size smaller than header")
+
+        fullStruct = self._contentStruct + str(self._emptyRegion) + "x"
+        if self.hasCRC:
+            fullStruct += "I"
+
+        # Now that the structure has been parsed from the content dict, convert it to a flat, "normal" k:v dict and
+        # initialize it with the given default values.
+        for k, v in self.content.items():
+            self.content[k] = v["val"]
+
+        data = raw[self.start: (self.start + self.size)]
+
+        # XOR decoding. By default the key does nothing.
+        self.key = bytes(len(raw))
+        self.encrypted = False
+        if type(decode_hint) is int:
+            self.set_key(decode_hint)
+            # only decode the part that actually contains encoded data. Copy the rest as-is.
+            data = bytes([b ^ self.key[i] for i, b in enumerate(data[:self._contentSize])]) + data[self._contentSize:]
+            data = struct.unpack(fullStruct, data)
+            for i, k in enumerate(self.content.keys()):
+                self.content[k] = data[i]
+            if self.hasCRC:
+                self.crc = data[-1]
+        # (partially) decoded header. In this case we ignore the data from raw.
+        elif type(decode_hint) is str:
+            # String can be hex data ("01 3a 44 [...]"), a json with values, or a file path to either one.
+            # Check if it's a file path. If so, replace the hint with the file content.
+            try:
+                with open(decode_hint) as f:
+                    decode_hint = f.read()
+            except OSError:
+                pass
+            data = None
+            # Check if it's a hex string...
+            try:
+                data = bytes.fromhex(decode_hint)
+            except ValueError:
+                pass
+            if data:
+                data = struct.unpack_from(self._contentStruct, data, 0)
+                for i, k in enumerate(self.content.keys()):
+                    self.content[k] = data[i]
+            # ... else check if it's a json string...
+            else:
+                try:
+                    # Double quotes get removed from the CLI if not escaped. Single quotes work, but the json parser
+                    # doesn't like them.
+                    data = json.loads(decode_hint.replace("\'", "\""))
+                except json.decoder.JSONDecodeError:
+                    pass
+                if data:
+                    # Skip all unknown keys.
+                    for k, v in data.items():
+                        if k in self.content:
+                            if type(v) is int:
+                                self.content[k] = v
+                            else:
+                                try:
+                                    self.content[k] = int(v, 16)
+                                except:
+                                    try:
+                                        self.content[k] = int(v, 2)
+                                    except:
+                                        self.content[k] = int(v)
+
+            # Update CRC. This requires serializing the data. Both things are done by getRaw
+            # even though we don't use or need the actual raw version of the header.
+            self.getRaw()
+
+    def set_key(self, key):
+        if type(key) is int:
+            if key:
+                self.encrypted = True
+            else:
+                self.encrypted = False
+            self.key = struct.pack("<I", key)
+            self.key = self.key * (self.size // len(self.key) + 1)
+        elif type(key) in (bytes, bytearray):
+            self.encrypted = False
+            for b in key:
+                if b:
+                    self.encrypted = True
+                    break
+            self.key = key
+        else:
+            raise Exception(f"Key has unknown type: {key} (type: {type(key)})")
+
+    def getRaw(self):
+        raw = struct.pack(self._contentStruct, *self.content.values())
+        if self.encrypted:
+            raw = bytes([b ^ self.key[i] for i, b in enumerate(raw)])
+        raw += b"\xff" * self._emptyRegion
+        if self.hasCRC:
+            self.crc = Checksum().CRC(data=raw)
+            raw += struct.pack("<I", self.crc)
+        return raw
+
+
+class TFTFile:
+
+    _nextion_type_names = {
+        0x79: "page",           # page
+        0x74: "text",           # t
+        0x37: "scrolling_text", # g
+        0x36: "number",         # n
+        0x3B: "xfloat",         # x
+        0x62: "button",         # b
+        0x35: "dual_state",     # bt
+        0x01: "slider",         # h
+        0x6A: "progress_bar",   # j
+        0x71: "crop",           # q
+        0x70: "picture",        # p
+        0x00: "waveform",       # s
+        0x7A: "gauge",          # z
+        0x33: "timer",          # tm
+        0x34: "variable",       # va
+        0x38: "checkbox",       # c
+        0x39: "radio",          # r
+        0x6D: "hotspot",        # m
+        0x3A: "qrcode",         # qr
+        0x05: "touchcap",       # tc
+    }
+
+    _modelXORs = {
+         "NX3224T024_011": 0x6d713e32,
+         "NX3224T028_011": 0x965cdd00,
+         "NX4024T032_011": 0x3b91869c,
+         "NX4832T035_011": 0xebab2932,
+         "NX4827T043_011": 0x1eb276b6,
+         "NX8048T050_011": 0x3b66b524,
+         "NX8048T070_011": 0xc079789d,
+
+         "NX3224F024_011": 0,
+         "NX3224F028_011": 0,
+         "NX4832F035_011": 0,
+
+         "NX3224K024_011": 0x1324a9d7,
+         "NX3224K028_011": 0xe8094ae5,
+         "NX4024K032_011": 0x45c41179,
+         "NX4832K035_011": 0x95febed7,
+         "NX4827K043_011": 0x60e7e153,
+         "NX8048K050_011": 0x453322c1,
+         "NX8048K070_011": 0xbe2cef78,
+
+         "NX4827P043_011": 0xcdc7c258,
+         "NX8048P050_011": 0xe81301ca,
+         "NX8048P070_011": 0x130ccc73,
+         "NX1060P070_011": 0x18a58690,
+         "NX1060P101_011": 0xdcb511f5,
+
+        "TJC3224T022_011": 0x189a66fb,
+        "TJC3224T024_011": 0x54cd4ea3,
+        "TJC3224T028_011": 0xafe0ad91,
+        "TJC4024T032_011": 0x022df60d,
+        "TJC4832T035_011": 0xd21759a3,
+        "TJC4827T043_011": 0x270e0627,
+        "TJC8048T050_011": 0x02dac5b5,
+        "TJC8048T070_011": 0xf9c5080c,
+
+        "TJC1612T118_011": 0,
+        "TJC3224T122_011": 0,
+        "TJC3224T124_011": 0,
+        "TJC3224T128_011": 0,
+        "TJC4024T132_011": 0,
+        "TJC4832T135_011": 0,
+
+        "TJC3224K022_011": 0x66cff11e,
+        "TJC3224K024_011": 0x2a98d946,
+        "TJC3224K028_011": 0xd1b53a74,
+        "TJC4024K032_011": 0x7c7861e8,
+        "TJC4827K043_011": 0x595b91c2,
+        "TJC4832K035_011": 0xac42ce46,
+        "TJC8048K050_011": 0x7c8f5250,
+        "TJC8048K070_011": 0x87909fe9,
+
+        "TJC4848X340_011": 0x9ea280d2,
+        "TJC4827X343_011": 0x767c3bae,
+        "TJC8048X343_011": 0x5eb5f196,
+        "TJC8048X350_011": 0x53a8f83c,
+        "TJC8048X370_011": 0xa8b73585,
+        "TJC1060X370_011": 0xa31e7f66,
+        "TJC8060X380_011": 0xd9b92b5c,
+        "TJC1060X3A1_011": 0x2c3a9902,
+
+        "TJC4848X540_011": 0x8e472af9,
+        "TJC4827X543_011": 0x66999185,
+        "TJC8048X543_011": 0x4e505bbd,
+        "TJC8048X550_011": 0x434d5217,
+        "TJC8048X570_011": 0xb8529fae,
+        "TJC1060X570_011": 0xb3fbd54d,
+        "TJC8060X580_011": 0xc95c8177,
+        "TJC1060X5A1_011": 0x3cdf3329,
+    }
+    _models = list(_modelXORs.keys())
+    _modelCRCs = [Checksum().CRC(data=m.encode("ascii")) for m in _models]
+
+    _fileHeader1 = {
+        "size":    0xc8,
+        "start":   0x00,
+        "hasCRC":  True,
+        "content": {
+            "old_lcd_orientation":              {"struct": "B", "val": 0},  # old_lcddire, the editor fixes this to 0
+            "editor_version_main":              {"struct": "B", "val": 0},  # banbenh
+            "editor_version_sub":               {"struct": "B", "val": 0},  # banbenl
+            "editor_vendor":                    {"struct": "B", "val": 0},  # mark (hmibiaoshiH, 'T' or 'N')
+            "old_firmware_address":             {"struct": "I", "val": 0},  # oldgujianadd (gujian = firmware)
+            "old_firmware_size":                {"struct": "I", "val": 0},  # oldgujianqyt
+            "old_lcd_resolution_width":         {"struct": "H", "val": 0},  # always largest resolution (old_screenw)
+            "old_lcd_resolution_height":        {"struct": "H", "val": 0},  # always smallest resolution (old_screenh)
+            "lcd_resolution_x":                 {"struct": "H", "val": 0},  # x-resolution in current orientation (cf ui_orientation), lcdscreenw
+            "lcd_resolution_y":                 {"struct": "H", "val": 0},  # y-resolution in current orientation (cf ui_orientation), lcdscreenh
+            "ui_orientation":                   {"struct": "B", "val": 0},  # guidire
+            "model_series":                     {"struct": "B", "val": 0},  # xilie: 0=T0, 1=K0, 2=X3, 3=X5, 100=T1
+            "unknown_otp":                      {"struct": "B", "val": 0},  # in the old editor the 8 bytes from here are syscomadd / syscomqyt (syscom.bin address and size)
+            "editor_version_bugfix":            {"struct": "B", "val": 3},
+            "unknown_stm32_lcddriver_address":  {"struct": "I", "val": 0},
+            "unknown_res1":                     {"struct": "H", "val": 0},
+            "driver_address":                   {"struct": "I", "val": 0},  # driveradd: the LCD driver blob (cd<series>.dll in the editor); 0 in files with resource slots
+            "driver_size":                      {"struct": "I", "val": 0},  # driverqyt
+            "hex_address":                      {"struct": "I", "val": 0},  # hexaddr: the embedded 'hex' image (asp<series>.dll); 0 in files with resource slots
+            "hex_size":                         {"struct": "I", "val": 0},  # hexlenth
+            "model_crc":                        {"struct": "I", "val": 0},  # Modelcrc; also the seed of the header 2 key (header2KeyFromModelCRC)
+            "file_version":                     {"struct": "B", "val": 0},  # filever
+            "encode_start":                     {"struct": "B", "val": 0},  # encodeh_star: first code of the project encoding table (codeh_star)
+            "ressources_files_address":         {"struct": "I", "val": 0},
+            "ressources_files_count":           {"struct": "I", "val": 0},
+            "file_size":                        {"struct": "I", "val": 0},  # datasize of the old editor (it adds the 4 bytes of the file checksum)
+            "ressource_files_size":             {"struct": "I", "val": 0},
+            "ressource_files_crc":              {"struct": "I", "val": 0},
+            "unknown_memory_fs_size":           {"struct": "I", "val": 0},
+            "unknown_next_file_address":        {"struct": "I", "val": 0},
+            "unknown_file_id":                  {"struct": "I", "val": 0},
+            "unknown_metadata_size":            {"struct": "I", "val": 0},
+        },
+    }
+    def __init__(self, raw:bytes, properties:dict, decode_hint:int=0):
+        self.size    = properties["size"]
+        self.start   = properties["start"]
+        self.hasCRC  = properties["hasCRC"]
+        self.content = pdict(properties["content"])
+
+        # Read content.
+        self._contentStruct = "<" + "".join(v["struct"] for v in self.content.values())
+        self._contentSize = struct.calcsize(self._contentStruct)
+        self._emptyRegion = self.size - self._contentSize
+        if self.hasCRC:
+            self._emptyRegion -= 4
+        if self._emptyRegion < 0:
+            raise Exception("Header size mismatch")
+        if len(raw) < self.size:
+            raise Exception("raw size smaller than header")
+
+        fullStruct = self._contentStruct + str(self._emptyRegion) + "x"
+        if self.hasCRC:
+            fullStruct += "I"
+
+        # Now that the structure has been parsed from the content dict, convert it to a flat, "normal" k:v dict and
+        # initialize it with the given default values.
+        for k, v in self.content.items():
+            self.content[k] = v["val"]
+
+        data = raw[self.start: (self.start + self.size)]
+
+        # XOR decoding. By default the key does nothing.
+        self.key = bytes(len(raw))
+        self.encrypted = False
+        if type(decode_hint) is int:
+            self.set_key(decode_hint)
+            # only decode the part that actually contains encoded data. Copy the rest as-is.
+            data = bytes([b ^ self.key[i] for i, b in enumerate(data[:self._contentSize])]) + data[self._contentSize:]
+            data = struct.unpack(fullStruct, data)
+            for i, k in enumerate(self.content.keys()):
+                self.content[k] = data[i]
+            if self.hasCRC:
+                self.crc = data[-1]
+        # (partially) decoded header. In this case we ignore the data from raw.
+        elif type(decode_hint) is str:
+            # String can be hex data ("01 3a 44 [...]"), a json with values, or a file path to either one.
+            # Check if it's a file path. If so, replace the hint with the file content.
+            try:
+                with open(decode_hint) as f:
+                    decode_hint = f.read()
+            except OSError:
+                pass
+            data = None
+            # Check if it's a hex string...
+            try:
+                data = bytes.fromhex(decode_hint)
+            except ValueError:
+                pass
+            if data:
+                data = struct.unpack_from(self._contentStruct, data, 0)
+                for i, k in enumerate(self.content.keys()):
+                    self.content[k] = data[i]
+            # ... else check if it's a json string...
+            else:
+                try:
+                    # Double quotes get removed from the CLI if not escaped. Single quotes work, but the json parser
+                    # doesn't like them.
+                    data = json.loads(decode_hint.replace("\'", "\""))
+                except json.decoder.JSONDecodeError:
+                    pass
+                if data:
+                    # Skip all unknown keys.
+                    for k, v in data.items():
+                        if k in self.content:
+                            if type(v) is int:
+                                self.content[k] = v
+                            else:
+                                try:
+                                    self.content[k] = int(v, 16)
+                                except:
+                                    try:
+                                        self.content[k] = int(v, 2)
+                                    except:
+                                        self.content[k] = int(v)
+
+            # Update CRC. This requires serializing the data. Both things are done by getRaw
+            # even though we don't use or need the actual raw version of the header.
+            self.getRaw()
+
+    def set_key(self, key):
+        if type(key) is int:
+            if key:
+                self.encrypted = True
+            else:
+                self.encrypted = False
+            self.key = struct.pack("<I", key)
+            self.key = self.key * (self.size // len(self.key) + 1)
+        elif type(key) in (bytes, bytearray):
+            self.encrypted = False
+            for b in key:
+                if b:
+                    self.encrypted = True
+                    break
+            self.key = key
+        else:
+            raise Exception(f"Key has unknown type: {key} (type: {type(key)})")
+
+    def getRaw(self):
+        raw = struct.pack(self._contentStruct, *self.content.values())
+        if self.encrypted:
+            raw = bytes([b ^ self.key[i] for i, b in enumerate(raw)])
+        raw += b"\xff" * self._emptyRegion
+        if self.hasCRC:
+            self.crc = Checksum().CRC(data=raw)
+            raw += struct.pack("<I", self.crc)
+        return raw
+
+
+class TFTFile:
+
+    _nextion_type_names = {
+        0x79: "page",           # page
+        0x74: "text",           # t
+        0x37: "scrolling_text", # g
+        0x36: "number",         # n
+        0x3B: "xfloat",         # x
+        0x62: "button",         # b
+        0x35: "dual_state",     # bt
+        0x01: "slider",         # h
+        0x6A: "progress_bar",   # j
+        0x71: "crop",           # q
+        0x70: "picture",        # p
+        0x00: "waveform",       # s
+        0x7A: "gauge",          # z
+        0x33: "timer",          # tm
+        0x34: "variable",       # va
+        0x38: "checkbox",       # c
+        0x39: "radio",          # r
+        0x6D: "hotspot",        # m
+        0x3A: "qrcode",         # qr
+        0x05: "touchcap",       # tc
+    }
+
+    _modelXORs = {
+         "NX3224T024_011": 0x6d713e32,
+         "NX3224T028_011": 0x965cdd00,
+         "NX4024T032_011": 0x3b91869c,
+         "NX4832T035_011": 0xebab2932,
+         "NX4827T043_011": 0x1eb276b6,
+         "NX8048T050_011": 0x3b66b524,
+         "NX8048T070_011": 0xc079789d,
+
+         "NX3224F024_011": 0,
+         "NX3224F028_011": 0,
+         "NX4832F035_011": 0,
+
+         "NX3224K024_011": 0x1324a9d7,
+         "NX3224K028_011": 0xe8094ae5,
+         "NX4024K032_011": 0x45c41179,
+         "NX4832K035_011": 0x95febed7,
+         "NX4827K043_011": 0x60e7e153,
+         "NX8048K050_011": 0x453322c1,
+         "NX8048K070_011": 0xbe2cef78,
+
+         "NX4827P043_011": 0xcdc7c258,
+         "NX8048P050_011": 0xe81301ca,
+         "NX8048P070_011": 0x130ccc73,
+         "NX1060P070_011": 0x18a58690,
+         "NX1060P101_011": 0xdcb511f5,
+
+        "TJC3224T022_011": 0x189a66fb,
+        "TJC3224T024_011": 0x54cd4ea3,
+        "TJC3224T028_011": 0xafe0ad91,
+        "TJC4024T032_011": 0x022df60d,
+        "TJC4832T035_011": 0xd21759a3,
+        "TJC4827T043_011": 0x270e0627,
+        "TJC8048T050_011": 0x02dac5b5,
+        "TJC8048T070_011": 0xf9c5080c,
+
+        "TJC1612T118_011": 0,
+        "TJC3224T122_011": 0,
+        "TJC3224T124_011": 0,
+        "TJC3224T128_011": 0,
+        "TJC4024T132_011": 0,
+        "TJC4832T135_011": 0,
+
+        "TJC3224K022_011": 0x66cff11e,
+        "TJC3224K024_011": 0x2a98d946,
+        "TJC3224K028_011": 0xd1b53a74,
+        "TJC4024K032_011": 0x7c7861e8,
+        "TJC4827K043_011": 0x595b91c2,
+        "TJC4832K035_011": 0xac42ce46,
+        "TJC8048K050_011": 0x7c8f5250,
+        "TJC8048K070_011": 0x87909fe9,
+
+        "TJC4848X340_011": 0x9ea280d2,
+        "TJC4827X343_011": 0x767c3bae,
+        "TJC8048X343_011": 0x5eb5f196,
+        "TJC8048X350_011": 0x53a8f83c,
+        "TJC8048X370_011": 0xa8b73585,
+        "TJC1060X370_011": 0xa31e7f66,
+        "TJC8060X380_011": 0xd9b92b5c,
+        "TJC1060X3A1_011": 0x2c3a9902,
+
+        "TJC4848X540_011": 0x8e472af9,
+        "TJC4827X543_011": 0x66999185,
+        "TJC8048X543_011": 0x4e505bbd,
+        "TJC8048X550_011": 0x434d5217,
+        "TJC8048X570_011": 0xb8529fae,
+        "TJC1060X570_011": 0xb3fbd54d,
+        "TJC8060X580_011": 0xc95c8177,
+        "TJC1060X5A1_011": 0x3cdf3329,
+    }
+    _models = list(_modelXORs.keys())
+    _modelCRCs = [Checksum().CRC(data=m.encode("ascii")) for m in _models]
+
+    _fileHeader1 = {
+        "size":    0xc8,
+        "start":   0x00,
+        "hasCRC":  True,
+        "content": {
+            "old_lcd_orientation":              {"struct": "B", "val": 0},  # old_lcddire, the editor fixes this to 0
+            "editor_version_main":              {"struct": "B", "val": 0},  # banbenh
+            "editor_version_sub":               {"struct": "B", "val": 0},  # banbenl
+            "editor_vendor":                    {"struct": "B", "val": 0},  # mark (hmibiaoshiH, 'T' or 'N')
+            "old_firmware_address":             {"struct": "I", "val": 0},  # oldgujianadd (gujian = firmware)
+            "old_firmware_size":                {"struct": "I", "val": 0},  # oldgujianqyt
+            "old_lcd_resolution_width":         {"struct": "H", "val": 0},  # always largest resolution (old_screenw)
+            "old_lcd_resolution_height":        {"struct": "H", "val": 0},  # always smallest resolution (old_screenh)
+            "lcd_resolution_x":                 {"struct": "H", "val": 0},  # x-resolution in current orientation (cf ui_orientation), lcdscreenw
+            "lcd_resolution_y":                 {"struct": "H", "val": 0},  # y-resolution in current orientation (cf ui_orientation), lcdscreenh
+            "ui_orientation":                   {"struct": "B", "val": 0},  # guidire
+            "model_series":                     {"struct": "B", "val": 0},  # xilie: 0=T0, 1=K0, 2=X3, 3=X5, 100=T1
+            "unknown_otp":                      {"struct": "B", "val": 0},  # in the old editor the 8 bytes from here are syscomadd / syscomqyt (syscom.bin address and size)
+            "editor_version_bugfix":            {"struct": "B", "val": 3},
+            "unknown_stm32_lcddriver_address":  {"struct": "I", "val": 0},
+            "unknown_res1":                     {"struct": "H", "val": 0},
+            "driver_address":                   {"struct": "I", "val": 0},  # driveradd: the LCD driver blob (cd<series>.dll in the editor); 0 in files with resource slots
+            "driver_size":                      {"struct": "I", "val": 0},  # driverqyt
+            "hex_address":                      {"struct": "I", "val": 0},  # hexaddr: the embedded 'hex' image (asp<series>.dll); 0 in files with resource slots
+            "hex_size":                         {"struct": "I", "val": 0},  # hexlenth
+            "model_crc":                        {"struct": "I", "val": 0},  # Modelcrc; also the seed of the header 2 key (header2KeyFromModelCRC)
+            "file_version":                     {"struct": "B", "val": 0},  # filever
+            "encode_start":                     {"struct": "B", "val": 0},  # encodeh_star: first code of the project encoding table (codeh_star)
+            "ressources_files_address":         {"struct": "I", "val": 0},
+            "ressources_files_count":           {"struct": "I", "val": 0},
+            "file_size":                        {"struct": "I", "val": 0},  # datasize of the old editor (it adds the 4 bytes of the file checksum)
+            "ressource_files_size":             {"struct": "I", "val": 0},
+            "ressource_files_crc":              {"struct": "I", "val": 0},
+            "unknown_memory_fs_size":           {"struct": "I", "val": 0},
+            "unknown_next_file_address":        {"struct": "I", "val": 0},
+            "unknown_file_id":                  {"struct": "I", "val": 0},
+            "unknown_metadata_size":            {"struct": "I", "val": 0},
         },
     }
     _fileHeader2 = {
@@ -527,27 +1283,27 @@ class TFTFile:
         "start":   0xc8,
         "hasCRC":  True,
         "content": {
-            "static_usercode_address":      {"struct": "I", "val": 0},
-            "app_attributes_data_address":  {"struct": "I", "val": 0},
+            "static_usercode_address":      {"struct": "I", "val": 0},  # staticstringbeg
+            "app_attributes_data_address":  {"struct": "I", "val": 0},  # attdatapos
             "ressources_files_address":     {"struct": "I", "val": 0},
             "usercode_address":             {"struct": "I", "val": 0},
-            "unknown_pages_address":        {"struct": "I", "val": 0},
-            "unknown_objects_address":      {"struct": "I", "val": 0},
-            "pictures_address":             {"struct": "I", "val": 0},
+            "pages_address":        {"struct": "I", "val": 0},  # pageadd
+            "objects_address":      {"struct": "I", "val": 0},  # objadd
+            "pictures_address":             {"struct": "I", "val": 0},  # picxinxiadd
             "gmovs_address":               {"struct": "I", "val": 0},
             "videos_address":              {"struct": "I", "val": 0},
             "audios_address":              {"struct": "I", "val": 0},
-            "fonts_address":               {"struct": "I", "val": 0},
+            "fonts_address":               {"struct": "I", "val": 0},  # zimoxinxiadd ("zimo" = font)
             "unknown_maincode_binary":      {"struct": "I", "val": 0},
-            "pages_count":                  {"struct": "H", "val": 0},
-            "unknown_objects_count":        {"struct": "H", "val": 0},
-            "pictures_count":               {"struct": "H", "val": 0},
+            "pages_count":                  {"struct": "H", "val": 0},  # pageqyt
+            "objects_count":        {"struct": "H", "val": 0},  # objqyt
+            "pictures_count":               {"struct": "H", "val": 0},  # picqyt
             "gmovs_count":                  {"struct": "H", "val": 0},
             "videos_count":                 {"struct": "H", "val": 0},
             "audios_count":                 {"struct": "H", "val": 0},
-            "fonts_count":                  {"struct": "H", "val": 0},
+            "fonts_count":                  {"struct": "H", "val": 0},  # zimoqyt
             "unknown_res1":                 {"struct": "H", "val": 0},
-            "unknown_encode":               {"struct": "B", "val": 0},
+            "encode":               {"struct": "B", "val": 0},  # encode (the project encoding id)
             "unknown_res2":                 {"struct": "B", "val": 0},
             "unknown_res3":                 {"struct": "H", "val": 0},
         },
@@ -557,29 +1313,29 @@ class TFTFile:
         "start":   0xc8,
         "hasCRC":  True,
         "content": {
-            "static_usercode_address":      {"struct": "I", "val": 0},
+            "static_usercode_address":      {"struct": "I", "val": 0},  # staticstringbeg
             "app_vas_address":              {"struct": "I", "val": 0},
             "app_vas_count":                {"struct": "I", "val": 0},
-            "app_attributes_data_address":  {"struct": "I", "val": 0},
+            "app_attributes_data_address":  {"struct": "I", "val": 0},  # attdatapos
             "ressources_files_address":     {"struct": "I", "val": 0},
             "usercode_address":             {"struct": "I", "val": 0},
-            "unknown_pages_address":        {"struct": "I", "val": 0},
-            "unknown_objects_address":      {"struct": "I", "val": 0},
-            "pictures_address":             {"struct": "I", "val": 0},
+            "pages_address":        {"struct": "I", "val": 0},  # pageadd
+            "objects_address":      {"struct": "I", "val": 0},  # objadd
+            "pictures_address":             {"struct": "I", "val": 0},  # picxinxiadd
             "gmovs_address":               {"struct": "I", "val": 0},
             "videos_address":              {"struct": "I", "val": 0},
             "audios_address":              {"struct": "I", "val": 0},
-            "fonts_address":               {"struct": "I", "val": 0},
+            "fonts_address":               {"struct": "I", "val": 0},  # zimoxinxiadd ("zimo" = font)
             "unknown_maincode_binary":      {"struct": "I", "val": 0},
-            "pages_count":                  {"struct": "H", "val": 0},
-            "unknown_objects_count":        {"struct": "H", "val": 0},
-            "pictures_count":               {"struct": "H", "val": 0},
+            "pages_count":                  {"struct": "H", "val": 0},  # pageqyt
+            "objects_count":        {"struct": "H", "val": 0},  # objqyt
+            "pictures_count":               {"struct": "H", "val": 0},  # picqyt
             "gmovs_count":                  {"struct": "H", "val": 0},
             "videos_count":                 {"struct": "H", "val": 0},
             "audios_count":                 {"struct": "H", "val": 0},
-            "fonts_count":                  {"struct": "H", "val": 0},
+            "fonts_count":                  {"struct": "H", "val": 0},  # zimoqyt
             "unknown_res1":                 {"struct": "H", "val": 0},
-            "unknown_encode":               {"struct": "B", "val": 0},
+            "encode":               {"struct": "B", "val": 0},  # encode (the project encoding id)
             "unknown_res2":                 {"struct": "B", "val": 0},
             "unknown_res3":                 {"struct": "H", "val": 0},
         },
@@ -610,14 +1366,14 @@ class TFTFile:
         if decode_usercode:
             self.decode_usercode(hexVals=hexVals)
 
-    # Character encodings of the header 2 field "unknown_encode" (table found by CalDymos' fork).
+    # Character encodings of the header 2 field "encode" (table found by CalDymos' fork).
     _charEncodings = ["null", "ascii", "gb2312", "iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5",
                       "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-9", "iso-8859-13", "iso-8859-15",
                       "iso-8859-11", "ks_c_5601-1987", "big5", "windows-1255", "windows-1256", "windows-1257",
                       "windows-1258", "windows-874", "koi8-r", "shift-jis", "utf-8"]
 
     def getCharEncoding(self):
-        code = self.header2.content.get("unknown_encode", -1)
+        code = self.header2.content.get("encode", -1)
         return self._charEncodings[code] if 0 <= code < len(self._charEncodings) else f"unknown ({code})"
 
     # ---- Header 2 detection -------------------------------------------------------------------------------------
@@ -627,6 +1383,17 @@ class TFTFile:
         0x38a388a8: ("unknown 480x272 series-4 (Sovol SV08 Max)", 0xf3d2481f),
         0x7527dcfa: ("unknown 800x480 series-4 (QIDI Plus3)",     0xd6068b8d),
     }
+
+    @staticmethod
+    def header2KeyFromModelCRC(model_crc):
+        """The XOR key of header 2, as the firmware computes it (`sub_18A38` of the AiHmiT7 firmware 159, `xor_sub`): the
+        checksum of the 4 little endian bytes of header 1's model_crc, started with the checksum of the string "A678ert"
+        (both with the byte checksum of the chip's CRC unit, `Checksum.CRC`); the 32 bit result is xored over header 2 as
+        its 4 little endian bytes, repeating. Reproduces the table and the learned keys of 51 of the 60 known models and
+        both learned ones (Sovol SV08 Max, QIDI Plus3); the other 9 table entries (older F / T series names) have the key 0, i.e. their
+        header 2 is not encoded at all. The editor does the same (`Appfree10` in HMI/hmitype/Kuozhan.cs, seed `datasize.apppasseord`)."""
+        c = Checksum()
+        return c.CRC(struct.pack("<I", model_crc), salt=c.CRC(b"A678ert"))
 
     # Header 2 layouts, tried in this order. They differ only in whether the two app_vas words are present.
     @classmethod
@@ -645,9 +1412,9 @@ class TFTFile:
             c["ressources_files_address"] == res_addr,
             c["usercode_address"] == res_addr + res_size,
             c["usercode_address"] < fsize,
-            c["unknown_pages_address"] >= c["usercode_address"],
-            c["unknown_pages_address"] < c["unknown_objects_address"] <= fsize,
-            c["pages_count"] > 0 and (c["unknown_objects_address"] - c["unknown_pages_address"]) % c["pages_count"] == 0,
+            c["pages_address"] >= c["usercode_address"],
+            c["pages_address"] < c["objects_address"] <= fsize,
+            c["pages_count"] > 0 and (c["objects_address"] - c["pages_address"]) % c["pages_count"] == 0,
         ]
         return sum(checks), len(checks)
 
@@ -666,6 +1433,7 @@ class TFTFile:
 
         candidates = []  # (label, key)
         crc = h1["model_crc"]
+        candidates.append(("model_crc key", self.header2KeyFromModelCRC(crc)))
         if self.model in self._modelXORs:
             candidates.append(("model key", self._modelXORs[self.model]))
         if crc in self._learnedModels:
@@ -809,10 +1577,10 @@ class TFTFile:
             return False
         c["ressources_files_address"] = base
         c["usercode_address"] = base + rsize
-        c["unknown_pages_address"] = tables["pages_addr"]
-        c["unknown_objects_address"] = tables["objects_addr"]
+        c["pages_address"] = tables["pages_addr"]
+        c["objects_address"] = tables["objects_addr"]
         c["pages_count"] = tables["pages"]
-        c["unknown_objects_count"] = tables["objects"]
+        c["objects_count"] = tables["objects"]
         # static usercode size: end of the block chain that starts the usercode
         uc = base + rsize
         p = uc
@@ -1303,7 +2071,7 @@ class TFTFile:
         start = self._getVal("usercode_address")
         # static_usercode_address is the size of actual block data (tighter bound)
         static_size = self._getVal("static_usercode_address")
-        pages_addr = self._getVal("unknown_pages_address")
+        pages_addr = self._getVal("pages_address")
         if static_size and static_size < pages_addr - start:
             return self.raw[start : start + static_size]
         return self.raw[start : pages_addr]
@@ -1332,7 +2100,7 @@ class TFTFile:
 
         # Info section — rich metadata from both headers
         uc_addr = self._getVal("usercode_address")
-        pages_addr = self._getVal("unknown_pages_address")
+        pages_addr = self._getVal("pages_address")
         static_size = self._getVal("static_usercode_address")
         uc_size = static_size if static_size and static_size < pages_addr - uc_addr else pages_addr - uc_addr
         info = {
@@ -1342,7 +2110,7 @@ class TFTFile:
             "orientation": self._getVal("ui_orientation"),
             "char_encoding": self.getCharEncoding(),
             "pages_count": self._getVal("pages_count"),
-            "objects_count": self._getVal("unknown_objects_count"),
+            "objects_count": self._getVal("objects_count"),
             "pictures_count": self._getVal("pictures_count"),
             "fonts_count": self._fontCount(),
             "usercode_address": f"0x{uc_addr:x}",
@@ -1604,10 +2372,10 @@ class TFTFile:
         """Parse page and object metadata records from the TFT binary.
         Returns list of pages, each containing its object list with event
         pointers, or None on failure."""
-        pages_addr = self._getVal("unknown_pages_address")
-        obj_addr = self._getVal("unknown_objects_address")
+        pages_addr = self._getVal("pages_address")
+        obj_addr = self._getVal("objects_address")
         pages_count = self._getVal("pages_count")
-        obj_count = self._getVal("unknown_objects_count")
+        obj_count = self._getVal("objects_count")
 
         if pages_addr == 0 or obj_addr == 0 or pages_count == 0:
             return None
@@ -1791,8 +2559,8 @@ class TFTFile:
     def _pageTable(self):
         """Page records: list of dicts first (index of the first object), count, code (usercode offset of the page
         code), attr (usercode offset of the page's attribute memory) and size (16-byte records only)."""
-        pa = self._getVal("unknown_pages_address")
-        oa = self._getVal("unknown_objects_address")
+        pa = self._getVal("pages_address")
+        oa = self._getVal("objects_address")
         n = self._getVal("pages_count")
         if not pa or not oa or not n or (oa - pa) % n:
             return None
@@ -2476,7 +3244,7 @@ class TFTFile:
 
         # 1. the object record in the object table at the end of the file
         before = sum(len(p) for p in parsed[:page]) + index
-        patch("object record", self._getVal("unknown_objects_address") + before * self.object_record_size + 40)
+        patch("object record", self._getVal("objects_address") + before * self.object_record_size + 40)
         # 2. the struct: in the init data block of the page, or in the global data image
         uc = self._getVal("usercode_address")
         pg = self.getReadableData()["pages"][page]

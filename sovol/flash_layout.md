@@ -18,11 +18,11 @@ loader / firmware, **guess** = my reading, not checked.
 | `0x043C1C–0x08FFFF` | | erased | confirmed |
 | `0x090000–0x0C3C1B` | 0x33C1C | **main firmware, copy B**, same header, payload CRC **fails** (16 247 bytes differ from A) | confirmed, reason unknown |
 | `0x0C3C1C–0x10FFFF` | | erased | confirmed |
-| `0x110000–0x113FFF` | 4 sectors | settings records: two 128 byte records per sector (`+0x000`, `+0x800`) | layout confirmed, fields unknown |
-| `0x114000` | 4 bytes | marker `78 56 34 12`, rest erased | confirmed |
-| `0x118000`, `0x119000` | 107 bytes each | two copies of one block (`88 d4 61 7b 5b 31 04 72 …`) | guess: product id / model data (firmware has `write ProductId error`, `dataModel error!`) |
+| `0x110000–0x113FFF` | 4 sectors | **`dataModel` (record A, `+0x000`) and ProductId (record B, `+0x800`)**: 0x80 bytes each, 4 identical copies; the first 0x7C bytes are XORed with `15 + i`, the last dword is a checksum that includes the chip serial. A decodes to `TJC4827X243_011C`, `00 00 00 00`, `0x0431` (1073, first field of `comok`'s second item), `0x0002` (touch type), `0x012C`; B decodes to the 8 byte serial (`57 02 35 01 6C 57 72 37`) plus 28 bytes of device data | confirmed (written by the firmware, see below) |
+| `0x114000`, `0x114800` | 4 bytes each | markers `0x12345678` (start) and `0x87654321` (end) around a complete dataModel write | confirmed |
+| `0x118000`, `0x119000` | 107 bytes each | two copies of one plain (not XORed) block (`88 d4 61 7b 5b 31 04 72 …`, contains `E0 01 10 01` = 480 x 272 and a few signed 16 bit offsets, starts with the marker `0x88`) | guess: touch calibration (the firmware has `Touch Just` / `Touch Screen Adjust OK!`); not verified |
 | `0x120000`, `0x130000` | 114 bytes (+ data up to `+0x9FF`) | A/B pair; byte `+0x11` is `80 25 00 00` = 9600 (saved baud rate) | baud confirmed, rest unknown |
-| `0x140000`, `0x150000` | 88 bytes (+ data up to `+0x403`) | A/B pair, starts `00 00 00 00` | unknown |
+| `0x140000`, `0x150000` | 0x400 (1024) bytes each | **the `repo`/`wepo`/`rept`/`wept`/`rfpt`/`wfpt` user storage area** (A/B pair, identical). Organised as 50-byte slots starting at 0, 50, 100, …, 1000; a never-written slot holds its own byte address as a 4-byte little-endian sentinel (`addr == value`), the one exception on this screen is the slot at byte 100, which holds the real value `1`. Confirmed live with `rept add,length` (streams raw bytes, exact bounds: a read that would reach byte 1024 returns nothing at all, not a partial read — this is very likely what `usize` reports) | confirmed |
 | `0x160000–0x160FFF` | 0x1000 | **`.tft` header** (headers 1 and 2, tables) | confirmed |
 | `0x161000–0x17FFFF` | | erased (padding inside the `.tft`) | confirmed |
 | `0x180000–0x9FFFFF` | 0x880000 | `.tft` **resources**: 12 files (pictures, fonts, ...), `.tft` offset `0x20000–0x89FFFF` (`ressources_files_size` 8 912 896) | confirmed (sizes match header 1) |
@@ -77,6 +77,17 @@ Every block is written in two copies (A/B or doubled sectors), the usual way to 
 ~28 bytes of data + a counter + 4 bytes of tail. The only decoded field is the saved baud rate (9600 in the `0x120000` /
 `0x130000` pair); the firmware starts at 115200 (the startup code of the `.tft` sets it, see the notes in `tools/screen_probe.py`).
 
+## Provisioning commands of the firmware (`sub_212A0`)
+The serial command handler has three raw (non-instruction) commands:
+* `HMISETPASSWORD15` + `8973` + 0x48 bytes (total 93 bytes) writes the `dataModel` (model name) and ProductId records: erases the sector at
+  `17 * 64 KiB` = `0x110000`, writes 4 copies of each (A at `+0x000`, B at `+0x800` of consecutive sectors), the marker `0x12345678` at
+  `0x114000`, reads everything back, and finally the marker `0x87654321` at `0x114800`. It only does this when the two serial words
+  (`0x79C390`, `0x79C394`) are `0xFFFFFFFF`, i.e. for a chip that has not been provisioned; a screen with a serial ignores it.
+* `rdad` / `wrad`: read / write a 13 byte structure (`stru_764EF8`, saved with the settings at `0x120000`), protected by a checksum. By the
+  names of the editor (`guanggao` = advertisement, `Appfree10`) this looks like the "ad free" registration of the display (the
+  hidden `registered` function); not verified.
+The record checksum (`dataModel::read`) includes the chip's serial number, so a flash image copied to another screen does not pass.
+
 ## `.tft` in the flash (`0x160000`)
 
 * The header says editor `tjc-1.66.1`, 480×272, `ui_orientation = 2` (pictures are stored turned by 180°), 91 pages,
@@ -114,7 +125,7 @@ For another dump the `.tft` length is the last non-`FF` byte (`max(i for i, b in
 
 ## Open questions
 
-* Fields of the settings records and the meaning of `0x118000`, `0x140000` blocks.
+* Fields of the settings records and the meaning of the `0x118000` block.
 * Why copy B at `0x90000` fails its CRC (older firmware, an interrupted update, or damage) and which copy the loader uses.
 * The boot descriptor at `0x0` and the XIP window offset, both need the chip's ROM or a logic analyzer capture of the
   boot (the capture of the MCU reading the flash at start-up is in `4.txt` / `8.txt`: `03` reads of 4 bytes from `0x6FB4` up).

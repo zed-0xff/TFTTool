@@ -143,8 +143,8 @@ from the serial syntax documented here and does not need to match it to use the 
 | `move` | obj, x, y | 🔍 inferred from the firmware code, not tested | Likely moves a component to new coordinates. |
 | `fill` | x, y, w, h, color | ✅ tested on this screen | Fills a rectangular area with a colour. |
 | `xnum` | x, y, w, h, font, color, background, align, digits, value | 🔍 inferred from the firmware code, not tested | Likely draws a formatted number directly (an `xstr`-style counterpart of a number component), paired with the hidden `xnumadd`. |
-| `repo` | att, add | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Reads a variable from the user storage area (EEPROM-like). |
-| `wepo` | att, add | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Writes a variable to the user storage area (EEPROM-like). |
+| `repo` | att, add | ✅ tested on this screen | Reads a variable from the user storage area. Confirmed: `repo var,address` (bare identifier, no quotes; address first does not work — `repo address,var` fails with `eeprom operation failed`). The area is exactly 1024 bytes (addresses 0–1023), physically at flash `0x140000`/`0x150000` (A/B pair), see `sovol/flash_layout.md`. |
+| `wepo` | att, add | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Writes a variable to the user storage area (same 1024-byte area `repo` reads, confirmed at flash `0x140000`/`0x150000`; not tested — writing is riskier than reading, see `sovol/flash_layout.md`). |
 | `beep` | duration_ms | 🔍 inferred from the firmware code, not tested | Plays the buzzer for a duration; used in `ext/TFTTool/tools/screen_bridge.py` for immediate touch feedback (not yet tried on hardware). |
 | `meup` | — | 🔍 inferred from the firmware code, not tested | Likely wakes the screen (complements `sleep=`/`wup=`); not pinned down. |
 | `pa_q` | att0, att1 | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Gets the number of characters for a given pinyin. |
@@ -158,10 +158,10 @@ from the serial syntax documented here and does not need to match it to use the 
 | `cuts` | — | 🔍 inferred from the firmware code, not tested | Likely removes/cuts a substring from a string variable (complement of `substr`). |
 | `addt` | objid, ch, qyt | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Streams a batch of data points into a waveform/curve component (transparent-data mode). |
 | `init` | obj | 🔍 inferred from the firmware code, not tested | Likely runs a component's `load`/init event code on demand. |
-| `rept` | add, lenth | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Reads from the user storage area and streams it out the serial port (transparent-data mode). |
-| `wept` | add, lenth | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Streams incoming serial data into the user storage area (transparent-data mode). |
-| `rfpt` | var, address | 🔍 inferred from the firmware code, not tested | Likely reads from the on-board SPI flash user area directly (the flash-backed counterpart of `repo`, which uses EEPROM-style storage). |
-| `wfpt` | var, address | 🔍 inferred from the firmware code, not tested | Likely writes to the on-board SPI flash user area directly (the flash-backed counterpart of `wepo`). |
+| `rept` | add, lenth | ✅ tested on this screen | Streams raw bytes from the user storage area straight out the serial port (no `get`/framing needed, just the raw bytes). Confirmed: `rept 0,1024` returns the whole 1024-byte area cleanly; a request whose `add+lenth` would exceed 1024 returns **nothing at all**, not a partial read — the clean way to probe the boundary of `usize`. More reliable to use than `repo`+`get` back to back in a tight loop (those got progressively desynced in testing; cause not identified, screen itself stayed healthy throughout). |
+| `wept` | add, lenth | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Streams incoming serial data into the user storage area (the write counterpart of `rept`); not tested. |
+| `rfpt` | var, address | 🔍 inferred from the firmware code, not tested | Likely reads from the on-board SPI flash user area directly (the flash-backed counterpart of `repo`). Tried on hardware with 3 operand shapes (its real operand count, confirmed — 0/1/2/4 args all give `invalid parameter quantity`): any 3 unquoted operands (`sys0,0,4` in every order, including `0,0,0`) give a plain `invalid instruction`; any operand given as a quoted string gives `eeprom operation failed`→`invalid variable operation` instead — consistently, regardless of position or content, so none of its 3 operands appears to want a quoted name. The actual argument meaning was not found; screen stayed fully healthy throughout. |
+| `wfpt` | var, address | 🔍 inferred from the firmware code, not tested | Likely writes to the on-board SPI flash user area directly (the flash-backed counterpart of `wepo`). Tried twice with all-zero/small operands (`wfpt 0,0,0`, `wfpt sys0,0,4`): both gave **no reply at all** despite `bkcmd=3` (every other command replies); screen remained fully responsive afterwards and `sys0` was unchanged, but the lack of any reply is unexplained — **do not try further without deciding that risk is acceptable**, since a write-type command that silently doesn't answer could in principle be waiting for additional raw bytes we didn't send. |
 | `rest` | — | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Resets (reboots) the device. No parameters. |
 | `getv` | — | 🔍 inferred from the firmware code, not tested | Likely gets a value with an explicit type/format conversion (complements `get`/`gets`). |
 | `draw` | x, y, x2, y2, color | ✅ tested on this screen | Draws a rectangle outline. |
@@ -234,7 +234,7 @@ from the serial syntax documented here and does not need to match it to use the 
 | `thsp` | Auto-sleep timeout with no touch activity. |
 | `thup` | Touch-wake switch while asleep (0 off, 1 on). |
 | `tpdir` | Touch panel orientation. |
-| `usize` | Size of the user storage area. |
+| `usize` | Size of the user storage area; very likely `1024` — `rept`'s read boundary (see `repo`/`rept`) matches exactly, not read directly. |
 | `ussp` | Auto-sleep timeout with no serial activity. |
 | `volume` | Audio volume. |
 | `wup` | Page-refresh behaviour after waking from sleep. |

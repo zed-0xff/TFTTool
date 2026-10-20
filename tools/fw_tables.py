@@ -9,9 +9,13 @@ The runtime has two tables the command parser walks (found in the AiHmiT7 firmwa
   short  8 byte records `name[4] f0 f1 f2 f3`, starts with `i`, ends with `play`: the fixed size commands (`pic`, `cir`, `fill`,
          `page`, ...); the position in this table is the number the parser uses for the command
 
-f0..f3 are printed raw. What is known: for the short table f0 is the operand class index, f1 the number of operands
-(0xFE = variable, 0xFF = see the parser), f2 the operand kind (an ASCII letter: `o` object, `e` expression, `f`, `g`, `p`, `y`)
-and f3 a handler number. The positions of the long table match the numbers of the operator class 8 of TFTTool
+The four bytes are, in the names of the editor's own source (`HMI/hmitype/CodeRun.cs`, `comtype_64` / `comtype_32`, an
+older build with 32 / 31 of these records; 28 of 30 and 28 of 29 common records are byte-identical, the others only differ in the
+number of operands, e.g. `timerset` 3 -> 4, `nstr` 2 -> 3, `draw_h` 6 -> 13):
+  comindex  the command class index (0..7)
+  canqyt    the number of operands (0xFE = variable, 0xFF = see the parser)
+  canlei    the operand kind, an ASCII letter: `e` expression, `f`, `g`, `o` object, `p`, `y` (255 = none / special)
+  res       the code number of the command inside its class The positions of the long table match the numbers of the operator class 8 of TFTTool
 (`doevents` is 48 in both); the positions of the short table do NOT equal the editor's numbers of class 4 (firmware 159 knows
 `uprd`, `move`, `xnum`, `beep`, `meup`, `gets`, `sets`, `cuts`, `rept`, `wept`, `play` that the 1.65.5 / 1.67.4 lists lack), so
 the tables of this firmware can only be used to check the names and the order, not to name compiled operators.
@@ -27,6 +31,12 @@ import sys
 _NAME = re.compile(rb"^[a-z_][a-z0-9_]*$")
 
 
+def _record(index, text, rest):
+    comindex, canqyt, canlei, res = rest
+    return {"index": index, "name": text.decode(), "comindex": comindex, "canqyt": canqyt, "canlei": canlei, "res": res,
+            "f": list(rest)}
+
+
 def _long_table(data):
     start = data.find(b"click\x00\x00\x00")
     if start < 0:
@@ -39,7 +49,7 @@ def _long_table(data):
         text = name if end < 0 else name[:end]
         if len(text) < 3 or not _NAME.match(text) or (end >= 0 and name[end:].strip(b"\x00")):
             break
-        out.append({"index": len(out), "name": text.decode(), "f": list(rest)})
+        out.append(_record(len(out), text, rest))
         pos += 12
     return pos, out
 
@@ -52,7 +62,7 @@ def _short_table(data, pos):
         text = name if end < 0 else name[:end]
         if not text or not _NAME.match(text) or (end >= 0 and name[end:].strip(b"\x00")):
             break
-        out.append({"index": len(out), "name": text.decode(), "f": list(rest)})
+        out.append(_record(len(out), text, rest))
         pos += 8
     return out
 
@@ -90,7 +100,8 @@ def main():
     for key in ("long", "short"):
         print(f"{key} table, {len(tables[key])} records")
         for e in tables[key]:
-            print(f"  {e['index']:3} {e['name']:<10} " + " ".join(f"{v:02x}" for v in e["f"]))
+            print(f"  {e['index']:3} {e['name']:<10} class {e['comindex']} operands {e['canqyt']:3} kind {e['canlei']:3}"
+                  f" code {e['res']:3}")
     print(f"hidden names ({len(tables['hidden'])}): " + " ".join(tables["hidden"]))
     return 0
 

@@ -985,7 +985,7 @@
       "ok": true
     }
   },
-  "header2_note": "layout=ext, learned key=0xf3d2481f, validation 6/6",
+  "header2_note": "layout=ext, model_crc key=0xf3d2481f, validation 6/6",
   "files": {
     "headers": [
       "header1.json",

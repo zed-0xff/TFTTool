@@ -29,10 +29,10 @@ class SampleFiles(unittest.TestCase):
                 scan = t._scanTables()
                 self.assertIsNotNone(scan)
                 c = t.header2.content
-                self.assertEqual(scan["pages_addr"], c["unknown_pages_address"])
-                self.assertEqual(scan["objects_addr"], c["unknown_objects_address"])
+                self.assertEqual(scan["pages_addr"], c["pages_address"])
+                self.assertEqual(scan["objects_addr"], c["objects_address"])
                 self.assertEqual(scan["pages"], c["pages_count"])
-                self.assertEqual(scan["objects"], c["unknown_objects_count"])
+                self.assertEqual(scan["objects"], c["objects_count"])
 
     def test_pages_and_objects(self):
         for f in FILES:
@@ -41,7 +41,7 @@ class SampleFiles(unittest.TestCase):
                 d = t.getReadableData(True)
                 pages = [p for p in d["pages"] if p.get("page") is not None]
                 self.assertEqual(len(pages), t._getVal("pages_count"))
-                self.assertEqual(sum(len(p["objects"]) for p in pages), t._getVal("unknown_objects_count"))
+                self.assertEqual(sum(len(p["objects"]) for p in pages), t._getVal("objects_count"))
                 for p in pages:
                     for o in p["objects"]:
                         self.assertTrue(-1000 < o["x"] < 2000 and 0 <= o["w"] < 2000 and 0 <= o["h"] < 2000)

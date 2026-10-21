@@ -635,7 +635,7 @@ lbl_13f81:
     click b7, 0
     down
 
-; object id 32 (unknown_0x3c 'exp1'): x=95, y=49, w=64, h=64, name hash=0x8ceb07bd
+; object id 32 (external_picture 'exp1'): x=95, y=49, w=64, h=64, name hash=0x8ceb07bd
 ; flags=0x37, aph=127, events: touch_press=0x1032b, touch_release=0x10340
 ; path="ram/file0.jpg"
 ; 01143b:  00 00 00 00 00 00 ff 00                          |........|
@@ -650,7 +650,7 @@ lbl_13f81:
     click b2, 0
     down
 
-; object id 33 (unknown_0x3c 'exp2'): x=223, y=49, w=64, h=64, name hash=0xc8dff2ed
+; object id 33 (external_picture 'exp2'): x=223, y=49, w=64, h=64, name hash=0xc8dff2ed
 ; flags=0x37, aph=127, events: touch_press=0x1035b, touch_release=0x10370
 ; path="ram/file1.jpg"
 ; 01147b:  00 00 00 00 00 00 ff 00                          |........|
@@ -665,7 +665,7 @@ lbl_13f81:
     click b3, 0
     down
 
-; object id 34 (unknown_0x3c 'exp3'): x=350, y=48, w=64, h=64, name hash=0x88caab0
+; object id 34 (external_picture 'exp3'): x=350, y=48, w=64, h=64, name hash=0x88caab0
 ; flags=0x37, aph=127, events: touch_press=0x1038b, touch_release=0x103a0
 ; path="ram/file2.jpg"
 ; 0114bb:  00 00 00 00 00 00 ff 00                          |........|
@@ -680,7 +680,7 @@ lbl_13f81:
     click b4, 0
     down
 
-; object id 35 (unknown_0x3c 'exp4'): x=95, y=161, w=64, h=64, name hash=0x40b6184d
+; object id 35 (external_picture 'exp4'): x=95, y=161, w=64, h=64, name hash=0x40b6184d
 ; flags=0x37, aph=127, events: touch_press=0x103bb, touch_release=0x103d0
 ; path="ram/file3.jpg"
 ; 0114fb:  00 00 00 00 00 00 ff 00                          |........|
@@ -695,7 +695,7 @@ lbl_13f81:
     click b5, 0
     down
 
-; object id 36 (unknown_0x3c 'exp5'): x=223, y=161, w=64, h=64, name hash=0x80e54010
+; object id 36 (external_picture 'exp5'): x=223, y=161, w=64, h=64, name hash=0x80e54010
 ; flags=0x37, aph=127, events: touch_press=0x103eb, touch_release=0x10400
 ; path="ram/file4.jpg"
 ; 01153b:  00 00 00 00 00 00 ff 00                          |........|
@@ -710,7 +710,7 @@ lbl_13f81:
     click b6, 0
     down
 
-; object id 37 (unknown_0x3c 'exp6'): x=351, y=161, w=64, h=64, name hash=0xc4d1b540
+; object id 37 (external_picture 'exp6'): x=351, y=161, w=64, h=64, name hash=0xc4d1b540
 ; flags=0x37, aph=127, events: touch_press=0x1041b, touch_release=0x10430
 ; path="ram/file5.jpg"
 ; 01157b:  00 00 00 00 00 00 ff 00                          |........|

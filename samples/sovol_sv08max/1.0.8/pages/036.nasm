@@ -228,7 +228,7 @@ lbl_28388:
     down
     up
 
-; object id 8 (unknown_0x3c 'exp1'): x=376, y=51, w=11, h=5, name hash=0x8ceb07bd
+; object id 8 (external_picture 'exp1'): x=376, y=51, w=11, h=5, name hash=0x8ceb07bd
 ; flags=0x37, aph=0
 ; path="ram/finish.jpg"
 ; 0286f0:  00 00 00 00 00 00 ff 00                          |........|

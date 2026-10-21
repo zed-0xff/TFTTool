@@ -453,7 +453,7 @@
 ; flags=0x37, aph=127, x=444, y=166, w=33, h=30, endx=476, endy=195, events: touch_press=0x1ca3a, touch_release=0x1ca4f
 ; sta=3, font=2, pco=0xffff, xcen=0, ycen=1, txt_maxl=300, isbr=1, background=0, txt="60℃"
 
-; object at 0x1c70: unknown_0x3c id 279 'exp0' (page 21), 64 bytes
+; object at 0x1c70: external_picture id 279 'exp0' (page 21), 64 bytes
 ; flags=0x37, aph=127, x=227, y=64, w=160, h=160, endx=386, endy=223
 ; 001ccc:  00 00 00 00 00 00 ff 00 3c 74 00 00              |........<t..|
 

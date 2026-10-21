@@ -83,7 +83,7 @@ lbl_16d9a:
     down
     up
 
-; object id 1 (unknown_0x02 'gm0'): x=238, y=127, w=34, h=34, name hash=0x9d43bf99
+; object id 1 (gmov 'gm0'): x=238, y=127, w=34, h=34, name hash=0x9d43bf99
 ; flags=0x37, aph=127
 ; vid=0, en=1, dis=100
 ; 0165ef:  01 00 00                                         |...|

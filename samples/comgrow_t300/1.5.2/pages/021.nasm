@@ -332,7 +332,7 @@ lbl_1cac7:
     up
     down
 
-; object id 279 (unknown_0x3c 'exp0'): x=227, y=64, w=160, h=160, name hash=0x4cb85fe0
+; object id 279 (external_picture 'exp0'): x=227, y=64, w=160, h=160, name hash=0x4cb85fe0
 
 ; object id 24 (hotspot 'm2'): x=407, y=0, w=73, h=40, name hash=0x3181c8b1
 ; flags=0x37, aph=0, events: touch_press=0x1cb89, touch_release=0x1cb9e

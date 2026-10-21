@@ -311,7 +311,7 @@ lbl_1ed86:
     up
     down
 
-; object id 276 (unknown_0x3c 'exp0'): x=29, y=45, w=160, h=160, name hash=0x4cb85fe0
+; object id 276 (external_picture 'exp0'): x=29, y=45, w=160, h=160, name hash=0x4cb85fe0
 
 ; object id 21 (hotspot 'm2'): x=407, y=0, w=73, h=47, name hash=0x3181c8b1
 ; flags=0x37, aph=0, events: touch_press=0x1ee18, touch_release=0x1ee2d

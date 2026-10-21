@@ -493,7 +493,7 @@
 ; flags=0x37, aph=127, x=444, y=138, w=33, h=30, endx=476, endy=167, events: touch_press=0x1ecf9, touch_release=0x1ed0e
 ; sta=3, font=2, pco=0xffff, xcen=0, ycen=1, txt_maxl=300, isbr=1, background=0, txt="60℃"
 
-; object at 0x1ebc: unknown_0x3c id 276 'exp0' (page 21), 64 bytes
+; object at 0x1ebc: external_picture id 276 'exp0' (page 21), 64 bytes
 ; flags=0x37, aph=127, x=29, y=45, w=160, h=160, endx=188, endy=204
 ; 001f18:  00 00 00 00 00 00 ff 00 60 82 00 00              |........`...|
 

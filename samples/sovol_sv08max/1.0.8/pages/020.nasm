@@ -263,7 +263,7 @@ lbl_1e858:
 ; object id 265 (text 't2'): x=121, y=53, w=344, h=34, name hash=0x2cf7a429
 ; sta=3, font=0, pco=0xffff, xcen=1, ycen=1, txt_maxl=300, isbr=1, background=0, txt=""
 
-; object id 10 (unknown_0x3c 'exp0'): x=80, y=91, w=176, h=176, name hash=0x4cb85fe0
+; object id 10 (external_picture 'exp0'): x=80, y=91, w=176, h=176, name hash=0x4cb85fe0
 ; flags=0x37, aph=127
 ; path="ram/176.jpg"
 ; 01dda4:  00 00 00 00 00 00 ff 00                          |........|

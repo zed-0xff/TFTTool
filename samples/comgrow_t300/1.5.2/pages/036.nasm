@@ -230,7 +230,7 @@ lbl_265fc:
     down
     up
 
-; object id 7 (unknown_0x3c 'exp1'): x=115, y=75, w=64, h=64, name hash=0x8ceb07bd
+; object id 7 (external_picture 'exp1'): x=115, y=75, w=64, h=64, name hash=0x8ceb07bd
 ; flags=0x37, aph=127
 ; path="ram/finish.jpg"
 ; 026992:  00 00 00 00 00 00 ff 00                          |........|

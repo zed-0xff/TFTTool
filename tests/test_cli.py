@@ -27,7 +27,15 @@ class CommandLine(unittest.TestCase):
             r = subprocess.run([sys.executable, os.path.join(helpers.ROOT, "TFTTool.py"), "-i", HSV[0], "--no-pictures"],
                                capture_output=True, text=True, cwd=d, timeout=120)
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertTrue(os.path.exists(os.path.join(d, "out", "info.json")))
+            self.assertTrue(os.path.exists(os.path.join(d, "HSV Test", "info.json")))
+
+    def test_default_output_directory_bails_if_it_exists(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.mkdir(os.path.join(d, "HSV Test"))
+            r = subprocess.run([sys.executable, os.path.join(helpers.ROOT, "TFTTool.py"), "-i", HSV[0], "--no-pictures"],
+                               capture_output=True, text=True, cwd=d, timeout=120)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("already exists", r.stderr)
 
     def test_single_json_file(self):
         with tempfile.TemporaryDirectory() as d:

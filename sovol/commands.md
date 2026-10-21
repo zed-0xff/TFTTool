@@ -20,6 +20,7 @@ legend:
 | 📖 | The editor's own description, not independently tested here |
 | 🔍 | Inferred from the firmware code (name, operand count/kind), not tested |
 | ⚠️ | Undocumented hidden function, reverse-engineered from the decompiled firmware |
+| 🧩 | Corroborated by real, commented production code from a **different** TJC/Nextion device (not this screen's firmware) — the instruction set is shared across the product line, but exact behavior on this specific firmware build is not independently confirmed |
 
 Two full tables of names exist in the firmware (`ext/TFTTool/tools/fw_tables.py` extracts them from a plain firmware
 image): a **53-entry table** for commands with a free-form string operand (names up to 8 bytes) and a **41-entry table**
@@ -72,9 +73,9 @@ from the serial syntax documented here and does not need to match it to use the 
 | `comok` | — | ✅ tested (part of the base serial protocol) | Reply to `connect`; never sent by the host, see the protocol section above. |
 | `btlen` | att0, att1 | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Tests a string variable's length in bytes. |
 | `redir` | — | 🔍 inferred from the firmware code, not tested | Likely redirects file I/O to a different directory/port; grouped with the other ram/sd0 file commands. |
-| `spstr` | — | 🔍 inferred from the firmware code, not tested | Likely splits a string variable on a separator into several variables (name pattern of the `substr` family). |
+| `spstr` | src.txt, dest.txt, separator, index | 🧩 confirmed syntax from a different TJC device's production code (community nspanel project, `spstr strCommand.txt,tIcon1.txt,"~",2`) | Splits `src.txt` on `separator` and writes the `index`-th token (0-based) into `dest.txt`. |
 | `print` | att | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Sends a variable/constant value over the serial port, unformatted. |
-| `ucopy` | — | 🔍 inferred from the firmware code, not tested | Likely copies a file (ram/ or sd0/) or a variable; source/target not confirmed. |
+| `ucopy` | dest, start, len, flag | 🧩 confirmed syntax from a different TJC device's production code (community nspanel project, `ucopy payloadLength,2,2,0` / `ucopy strCommand.txt,4,payloadLength-5,0`) | **Correction — not a file copy, as previously guessed here:** copies `len` bytes starting at offset `start` of the serial **receive buffer** (`u[]`, see `usize`) into `dest` (a `.val` or `.txt` variable). `flag`'s meaning not determined. |
 | `code_c` | — | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Clears the serial command receive buffer. No parameters. |
 | `draw3d` | x, y, x2, y2, style, color | 🔍 inferred from the firmware code, not tested | Likely draws a 3D/bevelled rectangle (sunken or raised), the usual Nextion-family `draw3d`. |
 | `qrcode` | x, y, w, ecc, string | 🔍 inferred from the firmware code, not tested | Draws a QR code — the firmware has a full from-scratch QR encoder (format-info BCH, 8 mask patterns, see sovol/flash_layout.md). Exact argument order not confirmed on hardware. |
@@ -94,7 +95,7 @@ from the serial syntax documented here and does not need to match it to use the 
 | `pa_txt` | att0, att1, beg, lenth | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Looks up the string for a given pinyin. |
 | `delfile` | path | ✅ tested on this screen | Deletes a file on ram/ or sd0/. Confirmed: deleting a file that is not the most recently drawn one in the ram/ pool shifts the other files’ positions, which silently breaks an in-flight draw of one of them — delete only the single file you just finished drawing, right after its `ramv`/`ref`, with no other write to `ram/` in between (see `ext/TFTTool/tools/screen_bridge.py`). |
 | `newfile` | path | 🔍 inferred from the firmware code, not tested | Likely creates an empty file on ram/ or sd0/ (the counterpart of `delfile`). |
-| `udelete` | name | 🔍 inferred from the firmware code, not tested | Likely deletes a variable (as opposed to `delfile` for files). |
+| `udelete` | n | 🧩 confirmed syntax from a different TJC device's production code (community nspanel project, `udelete bufferPos-1`) | **Correction — not a variable delete, as previously guessed here:** deletes the first `n` bytes of the serial receive buffer (`u[]`/`usize`) — used to drop garbage and resync onto the next frame after a malformed one. |
 | `strsize` | — | 🔍 inferred from the firmware code, not tested |  |
 | `crcputh` | path, algorithm | ⚠️ undocumented, reverse-engineered from the decompiled firmware | Computes a checksum of a ram/sd0 file (or attribute) and prints it as hex. Shares the engine of `crcputs`/`crcputu`/`crcputr` (firmware `sub_94C4`): algorithm 1 = CRC-16/MODBUS (same as the `twfile` frame CRC), algorithm 10 = the hardware CRC-32 (same family as the `.tft` checksums). Exact argument syntax not pinned down. |
 | `touch_j` | — | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Runs touch panel calibration. No parameters. |
@@ -104,8 +105,8 @@ from the serial syntax documented here and does not need to match it to use the 
 | `randset` | minval, maxval | 📖 the editor's own description (ch0_com.bin/ch0_va.bin), not independently tested on this screen | Sets the range of the `rand` system variable. |
 | `beepset` | freq, duration | 🔍 inferred from the firmware code, not tested | Likely configures the beeper (frequency/duration); complements the short-table `beep`. |
 | `cfguart` | port, baud, bits, parity, stop | 🔍 inferred from the firmware code, not tested | Likely configures a UART (port, baud, bits, parity, stop) — the serial-command counterpart of the hidden `uart2`. |
-| `crcrest` | — | ⚠️ undocumented, reverse-engineered from the decompiled firmware | Resets the running checksum accumulator used by the `crcput*` family, so several reads can be chained into one running CRC. |
-| `crcputu` | path, algorithm | ⚠️ undocumented, reverse-engineered from the decompiled firmware | Same checksum engine as `crcputh`, result as an unsigned decimal number. |
+| `crcrest` | channel, init | ⚠️🧩 reverse-engineered from the decompiled firmware, params confirmed by a different TJC device's production code (community nspanel project, `crcrest 1,0xFFFF`) | Resets CRC channel `channel` with initial value `init` (seen used for CRC-16/MODBUS framing, not the hardware CRC-32), so several reads can be chained into one running CRC. |
+| `crcputu` | offset, length | ⚠️🧩 reverse-engineered from the decompiled firmware; a different TJC device's production code uses it differently than assumed (`crcputu 0,payloadLength-1`) | Same checksum engine as `crcputh`. **The `path, algorithm` operands above are an unverified guess from the firmware code** — the other device's real usage instead feeds `length` bytes starting at `offset` of the serial **receive buffer** (`u[]`/`usize`, like `ucopy`) into the running CRC, with no path or algorithm argument at all. Which model is right for this screen isn't confirmed either way. |
 | `lcd_dev` | — | 🔍 inferred from the firmware code, not tested | Likely reads/sets an LCD controller parameter (driver variant, gamma, …); not pinned down. |
 | `lhmi_cle` | — | 🔍 inferred from the firmware code, not tested | Likely clears local HMI (on-screen/application) state — a guess from the name, paired with `whmi_cle`. |
 | `whmi_cle` | — | 🔍 inferred from the firmware code, not tested | Likely cancels/clears a pending `whmi-wri` update session (`whmi` matches the update protocol’s own command prefix). Not tested — power-cycling is the tested way out of a stuck transfer. |
@@ -234,7 +235,7 @@ from the serial syntax documented here and does not need to match it to use the 
 | `thsp` | Auto-sleep timeout with no touch activity. |
 | `thup` | Touch-wake switch while asleep (0 off, 1 on). |
 | `tpdir` | Touch panel orientation. |
-| `usize` | Size of the user storage area; very likely `1024` — `rept`'s read boundary (see `repo`/`rept`) matches exactly, not read directly. |
+| `usize` | **Conflicting evidence, not resolved.** Documented above as the size of the user storage area (very likely `1024`, matching `rept`'s read boundary) — but a different TJC device's production code (🧩, community nspanel project) uses `usize` as the **current length of the serial receive buffer** instead (`while(bufferPos<usize)`), read together with an indexed array `u[N]` over that same buffer (see `ucopy`/`udelete`/`crcputu`, which read/consume that buffer on that device). These could be two different sysvars that just happen to share a name across firmware builds, or the `1024`/`rept` reading could be the wrong one — not tested on this screen either way. |
 | `ussp` | Auto-sleep timeout with no serial activity. |
 | `volume` | Audio volume. |
 | `wup` | Page-refresh behaviour after waking from sleep. |

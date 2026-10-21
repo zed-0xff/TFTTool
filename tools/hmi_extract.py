@@ -75,6 +75,33 @@ C#) listing every attribute (as a compact table in a comment) and the full sourc
 Resources are written under their own name from the directory (not an index-prefixed name - every record type
 carries its real name). If that name is already used in the output directory, a numeric suffix is added before the
 extension (`name_1.ext`, `name_2.ext`, ...).
+
+## Legacy format (older, non-TJC Nextion Editor)
+
+A small minority of `.HMI` files (seen in `ESP-HVAC/Thermostat.HMI` and `nextion-font-editor/NextionHMITest.HMI`,
+confirmed by an identical 12-byte signature at offset 0 and otherwise byte-identical boilerplate between the two,
+unrelated projects) do not have the directory above at all - `read_directory()` raises instead of returning entries.
+This is a different, much older Nextion Editor serialization (header bytes 0-19 match TFTTool.py's own compiled-TFT
+`header1` layout almost exactly: resolution, orientation and - tellingly - the exact file size, all check out) that
+stores each component as a flat run of self-describing attribute records instead of compact name+value pairs:
+
+  +0   char[8]   attribute name, NUL padded
+  +8   u16       value width in bytes (1/2/4), repeated once more (purpose of the second copy not determined)
+  +12  u8        a per-attribute field/sort code, differs per name but is constant across projects
+  +13  u8        0xff
+  +14..27        14 bytes not decoded (the real/placeholder value round-trip within here isn't understood,
+                 only that the real, current value always ends up in the next field)
+  +28            value, `width` bytes
+  +28+width      a trailing label/help-text string, running up to the next record
+
+Found and decoded with a content-agnostic scanner (`_looks_like_legacy_record`/`decode_legacy_attributes`) that
+doesn't need a known attribute name list: records are recognized purely by this shape, which is how `type`, `sta`
+etc regenerate the same values our regular `.pa` decoder already established (`type=121` for a Page, `sta` 1 vs 2
+matching the one real difference found between the two sample files). Component/event boundaries (`att-NN`-style
+markers, `Eload`/`Edown`/`Eup`-style event sections - this format's equivalent of `.pa`'s `codesload`/`codesdown`)
+are not separated out: the whole file is dumped as one flat `legacy.cs` listing of `name = value  // label` lines,
+which still surfaces every real attribute value and every readable string (including embedded event script code,
+inline in whichever record's label run it happens to fall into) without needing those boundaries resolved.
 """
 import argparse
 import os
@@ -151,13 +178,16 @@ def sanitize_filename(name):
 
 
 def _decode_text(b):
-    """Decodes free-form text content (attribute strings, source lines, names): UTF-8 first - these files
-    commonly carry Chinese UI text and comments - falling back to latin1 (which never raises) only when the
-    bytes aren't valid UTF-8."""
-    try:
-        return b.decode("utf-8")
-    except UnicodeDecodeError:
-        return b.decode("latin1", "replace")
+    """Decodes free-form text content (attribute strings, source lines, names): UTF-8 first, then GBK - these
+    files commonly carry Chinese UI text and comments, and not always in the same encoding even within one
+    project (seen: a QIDI project's `.txt` attribute values in UTF-8 but its `keybdA` page's code comments in
+    GBK) - falling back to latin1 (which never raises) only when neither matches."""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return b.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    return b.decode("latin1", "replace")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -383,6 +413,87 @@ def render_pa_text(page_name, objs):
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Legacy (older, non-TJC Nextion Editor) format
+# ---------------------------------------------------------------------------------------------------------------
+
+LEGACY_RECORD_PREFIX = 28  # bytes from the start of a record to its value, see the module docstring
+
+
+def _looks_like_legacy_record(data, p):
+    if p + LEGACY_RECORD_PREFIX > len(data):
+        return False
+    name = data[p:p + 8]
+    nul = name.find(b"\x00")
+    if nul <= 0 or any(name[nul:]):
+        return False
+    if not all(32 <= b < 127 for b in name[:nul]):
+        return False
+    w1, w2 = struct.unpack_from("<HH", data, p + 8)
+    if w1 != w2 or w1 not in (1, 2, 4):
+        return False
+    return data[p + 13] == 0xff
+
+
+def _decode_legacy_value(width, raw):
+    if width == 1:
+        return raw[0]
+    if width == 2:
+        return struct.unpack("<H", raw)[0]
+    return struct.unpack("<I", raw)[0]
+
+
+def decode_legacy_attributes(data, start=0, end=None):
+    """-> [(name, width, value, label, record_start), ...] - see the module docstring for the record shape. Scans
+    byte-by-byte for the record signature rather than relying on a known attribute name list, since this format's
+    vocabulary doesn't match `.pa`'s (confirmed missing: objname, codesload, sendkey, groupid0)."""
+    end = len(data) if end is None else end
+    records = []
+    p = start
+    while p < end:
+        if not _looks_like_legacy_record(data, p):
+            p += 1
+            continue
+        name = data[p:p + 8].split(b"\x00", 1)[0].decode("ascii")
+        width = struct.unpack_from("<H", data, p + 8)[0]
+        value_off = p + LEGACY_RECORD_PREFIX
+        value = _decode_legacy_value(width, data[value_off:value_off + width])
+        # The label run stops at the next recognized record or at the first control byte, whichever comes first:
+        # genuine help text is plain text, so a control byte means we've run into something this format's record
+        # shape doesn't cover (string-valued attributes, component/event-section boundaries) - better to stop
+        # cleanly there than show its raw bytes as if they were part of the label.
+        q = value_off + width
+        while q < end and not _looks_like_legacy_record(data, q) and (data[q] >= 0x20 or data[q] in b"\t\n"):
+            q += 1
+        label = _decode_text(data[value_off + width:q])
+        records.append((name, width, value, label, p))
+        p = q
+    return records
+
+
+def render_legacy_text(records):
+    out = []
+    for name, _width, value, label, _pos in records:
+        if name == "type":
+            out.append("")
+        out.append(f"{name} = {value}  // {label}" if label else f"{name} = {value}")
+    return "\n".join(out)
+
+
+def extract_legacy(path, out_dir):
+    """Best-effort extraction for the older Nextion Editor format: a single flat `legacy.cs` text dump (component
+    and event-section boundaries aren't resolved, see the module docstring)."""
+    raw = open(path, "rb").read()
+    records = decode_legacy_attributes(raw)
+    if not records:
+        raise ValueError("not a recognized legacy .HMI format either (no attribute records found)")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "legacy.cs")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(render_legacy_text(records))
+    return records, out_path
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------------------------------------------
 
@@ -507,8 +618,14 @@ def main():
             unpack_images=args.unpack_images, unpack_pa=args.unpack_pa,
             convert_i=args.convert_i, include_stale=args.include_stale)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        try:
+            records, out_path = extract_legacy(args.hmi_file, args.out_dir)
+        except ValueError:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"not the usual .HMI container ({exc}); fell back to the older Nextion Editor format: "
+              f"{len(records)} attributes dumped to {out_path}")
+        return
 
     print(f"{len(written)} resources extracted to {args.out_dir} ({skipped_stale} stale entries skipped)")
     kinds = {}

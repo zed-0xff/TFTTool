@@ -1481,25 +1481,51 @@ class TFTFile:
         raw, n = self.raw, len(self.raw)
         floor = self.header1.content["ressources_files_address"] + self.header1.content["ressource_files_size"]
         sizes = list(self._objRecordSizes) + [r for r in range(150, 300) if r not in self._objRecordSizes]
+        # o = n - 4 - pad - N * rec with pad in [0, 8], N in [1, 5999] and rec <= max(sizes): no (rec, pad, N) can ever
+        # address a position before this bound, regardless of floor. On large files floor is far below it, so the
+        # naive per-N Python loop below would scan millions of positions that can never be reached; precompute the
+        # candidate positions once with a C-level find() instead (same matches, same priority order, much faster).
+        lo = max(floor, n - 4 - 8 - 5999 * max(sizes))
+        candidates = []
+        idx = lo
+        while True:
+            idx = raw.find(b"\x79\x00\x00", idx, n - 1)
+            if idx == -1:
+                break
+            candidates.append(idx)
+            idx += 1
+        candidates.reverse()  # descending position == ascending N, matching the original loop's search order
         for rec in sizes:
             for pad in range(0, 9):
-                for N in range(1, 6000):
-                    o = n - 4 - pad - N * rec
+                for o in candidates:
                     if o < floor:
-                        break
-                    if raw[o] != 0x79 or raw[o + 1] != 0 or raw[o + 2] != 0:      # first record: the page object, id 0
+                        continue
+                    diff = n - 4 - pad - o
+                    if diff <= 0 or diff % rec:
+                        continue
+                    N = diff // rec
+                    if not (1 <= N < 6000):
                         continue
                     for prs in (16, 12):
                         for P in range(1, 400):
                             pa = o - prs * P
                             if pa < floor:
                                 break
-                            first = struct.unpack_from("<HH", raw, pa)
-                            if first[0] != 0:
+                            prev = struct.unpack_from("<HH", raw, pa)
+                            if prev[0] != 0:
                                 continue
-                            recs = [struct.unpack_from("<HH", raw, pa + prs * i) for i in range(P)]
-                            if all(recs[i][0] + recs[i][1] == recs[i + 1][0] for i in range(P - 1)) \
-                                    and recs[-1][0] + recs[-1][1] == N:
+                            # Validate the chain incrementally and bail at the first broken link instead of building
+                            # the full P-long record list up front: on this kind of file "first[0] == 0" is common
+                            # (large zero-padded regions), so most candidates are invalid and fail after 1-2 records;
+                            # unpacking all P of them first made this quadratic-ish and was the real hang.
+                            ok = True
+                            for i in range(1, P):
+                                cur = struct.unpack_from("<HH", raw, pa + prs * i)
+                                if prev[0] + prev[1] != cur[0]:
+                                    ok = False
+                                    break
+                                prev = cur
+                            if ok and prev[0] + prev[1] == N:
                                 return {"pages_addr": pa, "objects_addr": o, "pages": P, "objects": N,
                                         "page_record": prs, "object_record": rec, "pad": pad}
         return None

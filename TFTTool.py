@@ -3355,10 +3355,11 @@ if __name__ == '__main__':
     parser.add_argument("-i", "--input", metavar="TFT_FILE", type=str, required=True,
                         help="Path to the TFT source file")
     parser.add_argument("-o", "--output", metavar="OUTPUT_FILE", type=str, required=False, default="",
-                        help="Output directory for the decoded file (default: 'out'); see TFTFile.writeOutput for its "
-                             "layout. If the name ends with .json a single json file is written instead. For "
-                             "conversions (-t): path of the resulting TFT file or a folder; if only a folder is "
-                             "specified, the file name is automatically determined based on the input file.")
+                        help="Output directory for the decoded file (default: the input file's basename without "
+                             "extension; must not already exist); see TFTFile.writeOutput for its layout. If the "
+                             "name ends with .json a single json file is written instead. For conversions (-t): "
+                             "path of the resulting TFT file or a folder; if only a folder is specified, the file "
+                             "name is automatically determined based on the input file.")
     parser.add_argument("-t", "--target", default="TXT",
                         help="Optional parameter to specify a new model. No text file will be created but rather "
                              "a new TFT file according to the specified model. If no output file/folder is specified, "
@@ -3430,7 +3431,9 @@ if __name__ == '__main__':
         sys.exit(0)
     args.target = args.target.upper()
     if args.target == "TXT":
-        out = outputPath if outputPath else Path("out")
+        out = outputPath if outputPath else Path(tftPath.stem)
+        if out.exists():
+            parser.error(f"output path {out} already exists")
         if out.suffix.lower() == ".json":
             out.parent.mkdir(parents=True, exist_ok=True)
             result = tft.getReadable(includeUnknowns=True)

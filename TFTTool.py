@@ -410,6 +410,9 @@ class TFTFile:
         0x05: "touchcap",       # tc
         0x02: "gmov",           # gm - animated picture; _structLayouts already has a partial 0x02 entry (vid/en/dis)
         0x3C: "external_picture",  # exp - picture loaded from a ram/sd0 file by path; see the 0x3c entry in _structLayouts
+        0x3F: "filestream",     # fs - file open/read/write/close/find interface (seen on TJC4827X243's own demo project:
+                                #      type=63 objname=fs0 val=0 qty=0 en=0 open=357 read=869 write=869 close=101 find=357
+                                #      molloc_s=10752 molloc=10752); no _structLayouts entry yet
     }
 
     _modelXORs = {
@@ -1885,7 +1888,7 @@ class TFTFile:
     # Names of the component attributes (those of the .HMI sources of the sample projects). The second table of the global data
     # image is a sorted list of the CRC of attribute names; unlike component names they are hashed as they are, without padding.
     _attributeNames = ("aph", "bco", "bco1", "bco2", "borderc", "borderw", "bpic", "buff", "buffsize", "ch", "close", "dez", "dir",
-                       "dis", "disup", "down", "drag", "effect", "en", "endx", "endy", "first", "font", "format", "from", "gdc",
+                       "dis", "disup", "down", "drag", "drastate", "effect", "en", "endx", "endy", "find", "first", "font", "format", "from", "gdc",
                        "gdh", "gdw", "groupid0", "groupid1", "h", "hig", "id", "inittrue", "isbr", "key", "left", "leftshow",
                        "lenth", "lockobj", "loop", "maxval", "maxval_y", "minval", "mode", "molloc", "molloc_s", "movex", "movey",
                        "objHig", "objWid", "objname", "path", "path_m", "pco", "pco0", "pco1", "pco2", "pco3", "pic", "pic1",

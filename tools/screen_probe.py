@@ -479,7 +479,7 @@ def main():
     t.add_argument("--seconds", type=float, default=15)
     t.set_defaults(fn=cmd_touch)
     sub.add_parser("draw").set_defaults(fn=cmd_draw)
-    sub.add_parser("soft-reset", help="DRAKJHSUYDGBNCJHGJKSHBDN: put a screen stuck mid-command back to idle, same baud rate").set_defaults(fn=cmd_soft_reset)
+    sub.add_parser("soft-reset", help="DRAKJHSUYDGBNCJHGJKSHBDN: the official 'exit active-parse mode' magic string (doc/tjcwiki), puts a screen stuck mid-command back to idle, same baud rate").set_defaults(fn=cmd_soft_reset)
     sub.add_parser("recover", help="soft-reset, then find a screen that sits at another baud rate and bring it back to 115200").set_defaults(fn=cmd_recover)
     r = sub.add_parser("raw")
     r.add_argument("commands", nargs="+")

@@ -563,6 +563,10 @@ def extract(path, out_dir, unpack_images=True, unpack_pa=True, convert_i=True, i
             if zi_name:
                 out_name = sanitize_filename(zi_name) + ".zi"
 
+        elif lower.endswith(".s"):
+            # the global (pre-init) script, not per-object attribute data like .pa - same encoding uncertainty applies
+            text = _decode_text(data.rstrip(b"\x00"))
+
         out_dir_full = os.path.join(out_dir, subdir)
         os.makedirs(out_dir_full, exist_ok=True)
         out_path = unique_path(out_dir_full, out_name)

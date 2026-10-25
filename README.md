@@ -234,3 +234,9 @@ Host side libraries (serial protocol only, nothing about the file formats):
 
 Klipper touchscreen UIs: [prestonbrown/helixscreen](https://github.com/prestonbrown/helixscreen) (LVGL, runs on the printer or as a remote
 screen via Moonraker; no Nextion support, an alternative to KlipperScreen for the Sovol screen project).
+
+## Sovol screen fast-blit (SD-boot) docs
+
+- `sovol/fastblit.md` — lossless partial-update screen protocol, firmware hooks, host tools, measurements.
+- `sovol/test-bench.md` — unattended hardware loop (USB relay, camera, ESP32 bridge), serial traps, dead ends.
+- `sovol/commands.md` — command reference (updated with `beep`, `twfile --raw`, `delfile` findings).

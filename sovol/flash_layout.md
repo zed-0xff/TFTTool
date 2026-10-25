@@ -129,3 +129,6 @@ For another dump the `.tft` length is the last non-`FF` byte (`max(i for i, b in
 * Why copy B at `0x90000` fails its CRC (older firmware, an interrupted update, or damage) and which copy the loader uses.
 * The boot descriptor at `0x0` and the XIP window offset, both need the chip's ROM or a logic analyzer capture of the
   boot (the capture of the MCU reading the flash at start-up is in `4.txt` / `8.txt`: `03` reads of 4 bytes from `0x6FB4` up).
+
+---
+See also: [fastblit.md](fastblit.md) (SD-boot image with the fast-blit hooks, wire protocol, firmware patch sites) and [test-bench.md](test-bench.md) (relay/camera/bridge bench, deploy loop, traps and dead ends).

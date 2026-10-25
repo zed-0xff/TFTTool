@@ -89,10 +89,10 @@ def build():
     boot_tramp[0x5A:0x5E] = encode_bl(boot_tramp_addr + 0x5A, BOOT_RESUME_ADDR, link=False)
     # old early boot hook disabled: superseded by the show_hmi_pic hook (trampoline #4)
 
-    # --- patch trampoline #3 (reboot ASCII command) ---
+    # --- patch trampoline #3 (hello ASCII command) ---
     reboot_tramp[0x2:0x6] = encode_bl(reboot_tramp_addr + 0x2, ascii_hook_addr, link=True)
-    reboot_tramp[0x6:0xA] = encode_movw(1, STRINGS53_ADDR & 0xFFFF)
-    reboot_tramp[0xA:0xE] = encode_movt(1, (STRINGS53_ADDR >> 16) & 0xFFFF)
+    reboot_tramp[0x6:0xA] = encode_movw(1, draw_boot_logo_addr & 0xFFFF)  # draw_hello_world uses same addr as draw_boot_logo
+    reboot_tramp[0xA:0xE] = encode_movt(1, (draw_boot_logo_addr >> 16) & 0xFFFF)
     reboot_tramp[0x14:0x18] = encode_bl(reboot_tramp_addr + 0x14, GET_STRINGC, link=True)
     reboot_tramp[0x18:0x1C] = encode_bl(reboot_tramp_addr + 0x18, REBOOT_RESUME_ADDR, link=False)
     data[REBOOT_HOOK_SITE:REBOOT_HOOK_SITE + 4] = encode_bl(REBOOT_HOOK_SITE, reboot_tramp_addr, link=False)

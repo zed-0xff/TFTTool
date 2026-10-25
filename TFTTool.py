@@ -1145,7 +1145,7 @@ class TFTFile:
     # The font section starts at header 2 "fonts_address" with fonts_count records of 44 bytes
     #   <20 attribute bytes (byte 7 = height in pixels)> <data size:u32> <data offset:u32 (rel. to the section)>
     #   <ff 00 01 01> <u32> <u32> <u32 = 0>
-    # The data of a font is <"1111"> <name, e.g. "4号全字库"> <encoding "utf-8"> and then a glyph table of 10-byte entries.
+    # The data of a font is <"1111"> <name, e.g. "size-4 full CJK character set"> <encoding "utf-8"> and then a glyph table of 10-byte entries.
     # ASCII style font (one block): per glyph, consecutive codes
     #   <code:u16> <advance:u8> <0> <0> <data offset:u24> <data length:u16>
     # (the offset is relative to 16 bytes before the end of the table; the glyph data follows the table).

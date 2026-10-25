@@ -192,12 +192,16 @@ class FastBridge(Bridge):
     """Whole frame = a few batched transfers: small rectangles first (fast feedback), the rest after;
     every transfer is one twfile + one draw command, whatever the number of rectangles in it."""
 
-    click = True
+    click = False      # off by default: both unexplained resets/USB drops (2026-10-23) happened only in runs with the buzzer click on
+    debug_page = False
 
     def _emit(self, events):
         super()._emit(events)
         if self.click and any(kind == "press" for kind, _, _ in events):
             self.link.command("beep 20")      # the buzzer ignores the duration (always the same short beep)
+        if self.debug_page and any(kind == "release" for kind, _, _ in events):
+            time.sleep(0.2)
+            self.log(f"  page after touch: dp={self.link.get('dp')}")
 
     def _batches(self, img, rects):
         recs = []
@@ -284,7 +288,8 @@ def main():
     p.add_argument("--cpu-budget", type=float, default=DEFAULT_CPU_BUDGET)
     p.add_argument("--seconds", type=float)
     p.add_argument("--view-only", action="store_true")
-    p.add_argument("--no-click", action="store_true", help="no buzzer beep on touch")
+    p.add_argument("--click", action="store_true", help="buzzer beep on touch (suspected of causing power dips/resets, off by default)")
+    p.add_argument("--debug-page", action="store_true", help="log the screen's current page id after every touch")
     p.add_argument("--latency-test", type=int, metavar="N")
     a = p.parse_args()
     import signal
@@ -300,7 +305,8 @@ def main():
         if a.view_only:
             src = ViewOnly(src)
         bridge = FastBridge(link, src, a.fps, a.cpu_budget)
-        bridge.click = not a.no_click
+        bridge.click = a.click
+        bridge.debug_page = a.debug_page
         try:
             bridge.run(a.seconds)
         except KeyboardInterrupt:

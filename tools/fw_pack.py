@@ -87,14 +87,31 @@ def sdboot_image(stock, source=os.path.join(HERE, "sdboot.S")):
     return pack(bytes(image))
 
 
+def sdboot_new_image(stock, source=os.path.join(HERE, "sdboot_new.S")):
+    """The SD file that lists bootable files and allows selection."""
+    if len(stock) % 4:
+        stock = stock + b"\0" * (4 - len(stock) % 4)
+    code = bytearray(assemble(source, {"PAYLOAD_SRC": SD_BASE + PAYLOAD_AT, "PAYLOAD_LEN": len(stock)}))
+    if len(code) > 0x1C8:
+        raise ValueError(f"the start code is {len(code)} bytes, the vector table and the code must fit in the first 0x1C8")
+    # Patch vector-table code pointers to use absolute addresses
+    for off in range(4, 0xC0, 4):
+        struct.pack_into("<I", code, off, (struct.unpack_from("<I", code, off)[0] + SD_BASE) & 0xFFFFFFFF)
+    image = bytearray(PAYLOAD_AT + len(stock))
+    image[:len(code)] = code
+    image[PAYLOAD_AT:] = stock
+    return pack(bytes(image))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sdboot", help="build the SD card file that runs the stock firmware from RAM")
     s.add_argument("--stock", required=True, help="the plain (unscrambled) stock image, e.g. app_10000_plain.bin")
     s.add_argument("-o", "--output", default="TFWriter_AiHmiT7.bin.make")
+    s.add_argument("--source", default="sdboot.S")
     a = p.parse_args()
-    out = sdboot_image(open(a.stock, "rb").read())
+    out = sdboot_image(open(a.stock, "rb").read(), source=a.source)
     open(a.output, "wb").write(out)
     print(f"{a.output}: {len(out)} bytes")
     return 0

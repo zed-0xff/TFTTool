@@ -40,6 +40,26 @@ exists only as decompiled stock code (`loader.c`, `app_10000.c`).
 Boot contract for a flat binary (used by DOOM and by the OS alike): linked at `0x0` (flash path) or
 `0x80000` (SD path), vector table first, SP in the first dword, `tools/fw_pack.py` container. No stub needed.
 
+App startup (inside the app image, all statically verified):
+vector table @`0x0` (SP=`0x800000`, reset=`0x349`) → `reset_handler` → `clock_init` (RCC `0x40000180`,
+wait lock bit 4) → thunk `0x268` → `init_table_runner` (`0x270`). The runner reads a 2-pointer table at
+image `0x29C` (dwords `0x32B9C`, `0x32BBC`, ADR-relative → `0x32E38`/`0x32E58`); the actual records are
+the last 32 bytes of the code+static region: rec1 `{src 0x32E58, dst 0x760000, len 0x20D0, fn 0x2A4}` =
+RLE-unpack `.data`; rec2 `{src 0x33C1C, dst 0x7620D0, len 0x3B368, fn 0x300}` = bss clear (16-byte
+memset chunks). Dispatch (`ldm r10!,{r0-r3}` / `subne r3,r7,r3` / `orr r3,r3,#1` / `bx r3`, with
+`r7 = first_record_addr - 1`) lands on the record `fn` targets `0x2A4` / `0x300`.
+The RLE body is at `0x2A4` (IDA's function start `0x29C` overlaps the 8 pointer bytes). RLE format:
+header H; literal count `L = H&7` (0 → next byte) meaning **L−1** literal bytes; flag `F = H>>4`
+(0 → next byte); then the literals, then either a backref (`H&8`: 1 offset byte, copy `F+2` bytes
+from `dst−offset`, overlapping) or `F` zero bytes. Max runs: 6 literals inline (254 extended),
+15 zeros, 17 backref bytes.
+After record 1, the runner does `sub.w lr, pc, #9` → LR=`0x281` (IDA misdecodes that word as `adr.w`);
+control lands at hand-assembled glue `0x281..0x299`, which falls over the 8 pointer bytes and
+re-enters the RLE body at `0x2A4` — that `0x281→0x2A4` path is one-way, so the record loop is never
+re-executed: record 2 (bss clear) is reached through the re-entry, not a second dispatch.
+Then `startup_tail` (`0x328`): `init_boot_struct` (zero 64 B at `0x79D3D8`) → `fpu_init_stub`/`fpu_init`
+(VMSR FPSCR `0x03000000`) → `main` (`0x2B0C0`).
+
 ---
 
 ## Part 1 — DOOM (the nRF52840 "next-hack" port)

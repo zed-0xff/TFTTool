@@ -188,3 +188,6 @@ pipeline lag, and made naive "time until idle" metrics misleading. Photographic 
 - KlipperScreen panel `network` crashes the container (missing `sdbus_block`); hide the panel or add the module.
 - `exec`-style "run uploaded code" was abandoned: its first tests hung because of the `--raw` twfile problem (see
   test-bench), so "SCRATCH is not executable" is **unproven** either way.
+
+---
+See also: [porting.md](porting.md) (boot chain, app startup/RLE layout, DOOM and OS budgets), [flash_layout.md](flash_layout.md) (what is where in flash) and [test-bench.md](test-bench.md) (relay/camera/bridge bench, deploy loop, traps and dead ends).

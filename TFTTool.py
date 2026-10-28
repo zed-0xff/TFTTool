@@ -924,7 +924,8 @@ class TFTFile:
         return None
 
     def getEditorVersionStr(self):
-        vendor = {ord("T"): "tjc", ord("N"): "nxt"}[self._getVal("editor_vendor")]
+        vendor_byte = self._getVal("editor_vendor")
+        vendor = {ord("T"): "tjc", ord("N"): "nxt"}.get(vendor_byte, "tjc")
         main   = self._getVal("editor_version_main")
         sub    = self._getVal("editor_version_sub")
         bug    = self._getVal("editor_version_bugfix")

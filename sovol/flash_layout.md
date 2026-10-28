@@ -132,3 +132,13 @@ For another dump the `.tft` length is the last non-`FF` byte (`max(i for i, b in
 
 ---
 See also: [fastblit.md](fastblit.md) (SD-boot image with the fast-blit hooks, wire protocol, firmware patch sites), [porting.md](porting.md) (boot chain, app startup/RLE layout, DOOM and OS budgets) and [test-bench.md](test-bench.md) (relay/camera/bridge bench, deploy loop, traps and dead ends).
+
+## External reference: Ender Pearl display project
+
+`ext/similar_projects/ender-pearl-display/` independently hit the same `.tft` checksum wall this project's
+`whmi-wri` path hits (patch a picture → uploads fine → boots to "System Data ERROR!" because three 4-byte checksum
+fields change with any pixel and none is a standard CRC32). They deliberately did not reverse the checksums and rebuild
+in the editor instead — the same choice as here; see `docs/03-custom-firmware.md`. Their `SIMILARITY_REPORT.md` compares
+this `TJC4827X243_011C` (800x480, runtime 159, 16 MB) against their `TJC3224T132_011N` (240x320, runtime 68, 8 MB):
+same protocol family, opposite execution. Read `docs/04-drawing.md` for the design technique (3× wallpapers, `xpic`
+panel crops, `xstr sta=0` text) that works around the display's inability to blur at runtime.

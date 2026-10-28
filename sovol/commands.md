@@ -281,3 +281,29 @@ from the serial syntax documented here and does not need to match it to use the 
 | `printport` | Selects which port subsequent `print`/`rprint`-family output goes to. |
 | `mlen` | Sets a byte (`byte_761EA2`) controlling some length/limit; not pinned down. |
 
+## Independent corroboration from another project
+
+The magic-string reset here (`DRAKJHSUYDGBNCJHGJKSHBDN`, sent before `connect` to leave the firmware's "active parse"
+mode / `recmod` and to recover a screen stuck mid-command) is exactly what the independent Nextion upload libraries
+(NSPanel-Tasmota driver, Enhanced-Nextion-Library `NexUpload::Reconnect`, powadcr) send routinely, and it is what the
+Ender Pearl display project (`ext/similar_projects/ender-pearl-display/docs/03-custom-firmware.md`) documents as the
+"protocol reparse" leave-command for the same `TJC3224T132` family. Same mechanism, different display — the byte string
+is a property of the TJC/Nextion firmware, not of this screen's firmware alone.
+
+The `.tft` checksum wall Ender Pearl hit (patch a picture, the file uploads fine, then boots to "System Data ERROR!"
+because three 4-byte checksum fields change with any pixel and none is a standard CRC32) is the same wall this
+project's `whmi-wri` path hits — see `flash_layout.md` for how the running checksum of the whole file is validated
+before the `.tft` is marked valid. Ender Pearl deliberately did not reverse the checksums and rebuilds in the editor
+instead; the same choice applies here.
+
+Their `docs/04-drawing.md` (store each wallpaper 3× as `bg`/`glass`/`focus`, draw panels as an `xpic` crop of the
+`glass` picture, draw text with `xstr … sta=0` so the background is cropped from the same picture and the anti-aliasing
+blends) is a design technique independent of the protocol — useful verbatim once a live UI is being built, since it
+works around the display's inability to blur at runtime and its tendency to wrap text wider than its box.
+
+Their full hardware/protocol write-up (`ext/similar_projects/ender-pearl-display/SIMILARITY_REPORT.md`) is a
+same-category comparison for this screen's `TJC4827X243_011C` (800x480, runtime 159, 16 MB flash) against the
+Ender Pearl `TJC3224T132_011N` (240x320, runtime 68, 8 MB flash): same protocol family, opposite execution (external
+Pi draws on a TJC display SoC vs. a full bootloader on this screen's own SoC). The protocol behavior transfers; every
+model/resolution/flash/baud number in their docs is for the other model and must not be copied.
+

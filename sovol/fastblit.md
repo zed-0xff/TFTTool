@@ -190,4 +190,20 @@ pipeline lag, and made naive "time until idle" metrics misleading. Photographic 
   test-bench), so "SCRATCH is not executable" is **unproven** either way.
 
 ---
-See also: [porting.md](porting.md) (boot chain, app startup/RLE layout, DOOM and OS budgets), [flash_layout.md](flash_layout.md) (what is where in flash) and [test-bench.md](test-bench.md) (relay/camera/bridge bench, deploy loop, traps and dead ends).
+See also: [commands.md](commands.md) (serial command set + the Ender Pearl checksum-wall / magic-string-reset corroboration), [porting.md](porting.md) (boot chain, app startup/RLE layout, DOOM and OS budgets), [flash_layout.md](flash_layout.md) (what is where in flash) and [test-bench.md](test-bench.md) (relay/camera/bridge bench, deploy loop, traps and dead ends).
+
+## External reference: Ender Pearl display project
+
+`ext/similar_projects/ender-pearl-display/` is a custom firmware + UI for a Creality Ender-3 V3 SE display
+(`TJC3224T132_011N`, 240x320). Same TJC/Nextion protocol family as this screen but opposite execution: an external
+Raspberry Pi draws every frame onto a TJC display SoC, whereas this project runs a full bootloader on the screen's own
+SoC. Not a code dependency — see `SIMILARITY_REPORT.md` for the full comparison. Worth reading for:
+
+- **`docs/03-custom-firmware.md`** — complete `.tft` build + `whmi-wri` flash workflow, the model-match check, and
+  back-to-stock via SD card. Explains the *why* behind `screen_probe.py --flash`.
+- **`docs/04-drawing.md`** — the "glass look" technique (3× wallpapers, `xpic` panel crops, `xstr sta=0` text), the
+  `bkcmd=3` / ≤6-in-flight flow control that avoids `0x24` overflow, and the draw-only-what-changed rule that stops
+  value updates from blinking.
+- **`docs/07-troubleshooting.md`** — symptom→cause→fix table; extras beyond `screen_probe.py` (dead buzzer, Wine
+  `.NET` errors, systemd ordering cycles).
+- **`design/MENUS.md`** — full screen-by-item spec, forward-looking reference if a menu system is built.

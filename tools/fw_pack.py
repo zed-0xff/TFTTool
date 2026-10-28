@@ -53,6 +53,8 @@ def pack(image, key=0, field_460=0x9F):
 def assemble(source, defines):
     """Thumb-2 source -> raw bytes of its .text (Apple / LLVM clang and pyelftools; no linker needed)."""
     from elftools.elf.elffile import ELFFile
+    # Resolve source to absolute path relative to HERE (not cwd, which may differ)
+    source = os.path.abspath(os.path.join(HERE, source))
     with tempfile.TemporaryDirectory() as d:
         obj = os.path.join(d, "o.o")
         # assembler-with-cpp (not plain "assembler"): runs the C preprocessor first, which is what actually applies

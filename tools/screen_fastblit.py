@@ -24,12 +24,10 @@ import struct
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import screen_probe as sp  # noqa: E402
-from screen_bridge import (Bridge, Link, StaticSource, ViewOnly, XSource,  # noqa: E402
-                           changed_rects, W, H)
-import screen_bridge as _sb  # noqa: E402
-_sb.cost = lambda w, h: 0.1 + 0.004 * w * h   # changed_rects() merges by this cost model
+from . import screen_probe as sp  # noqa: E402
+from . import screen_bridge as _sb  # noqa: E402
+from .screen_bridge import (Bridge, Link, StaticSource, ViewOnly, XSource,  # noqa: E402
+                            changed_rects, W, H)
 
 try:
     import numpy as np

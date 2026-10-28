@@ -41,8 +41,7 @@ import time
 
 from PIL import Image, ImageChops
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import screen_probe as sp  # noqa: E402
+from . import screen_probe as sp  # noqa: E402
 
 W, H = 480, 272
 PAGE = 20                         # page 90 was tried and rejected: it is a dialog page, see the module docstring

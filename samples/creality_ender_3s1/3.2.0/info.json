@@ -1,0 +1,94 @@
+{
+  "model": "Unknown display model",
+  "editor": "tjc-1.65.0",
+  "resolution": [
+    480,
+    272
+  ],
+  "orientation": 3,
+  "char_encoding": "gb2312",
+  "pages_count": 3,
+  "objects_count": 366,
+  "pictures_count": 2110,
+  "fonts_count": 8,
+  "usercode_address": "0x340000",
+  "usercode_size": 19266,
+  "pages": [
+    {
+      "page": 0,
+      "name": "page0",
+      "objects": 4,
+      "host_widgets": []
+    },
+    {
+      "page": 1,
+      "name": null,
+      "objects": 181,
+      "host_widgets": []
+    },
+    {
+      "page": 2,
+      "name": null,
+      "objects": 181,
+      "host_widgets": []
+    }
+  ],
+  "resources": [
+    {
+      "slot": 0,
+      "kind": "bootloader0",
+      "offset": 131216,
+      "size": 17570
+    },
+    {
+      "slot": 1,
+      "kind": "bootloader1",
+      "offset": 148786,
+      "size": 214544
+    },
+    {
+      "slot": 7,
+      "kind": "pictures",
+      "offset": 363330,
+      "size": 2948163
+    },
+    {
+      "slot": 8,
+      "kind": "fonts",
+      "offset": 3311493,
+      "size": 46837
+    }
+  ],
+  "checksums": {
+    "header1": {
+      "stored": "0x770a625f",
+      "computed": "0x770a625f",
+      "ok": true
+    },
+    "header2": {
+      "stored": "0xc8efdbe1",
+      "computed": "0xc8efdbe1",
+      "ok": true
+    },
+    "resources": {
+      "stored": "0x2b47e906",
+      "computed": "0x2b47e906",
+      "ok": true
+    },
+    "file": {
+      "stored": "0xa17bff75",
+      "computed": "0xa17bff75",
+      "ok": true
+    }
+  },
+  "header2_note": "layout=ext, model_crc key=0xf3d2481f, validation 6/6",
+  "files": {
+    "headers": [
+      "header1.json",
+      "header2.json"
+    ],
+    "pages": 3,
+    "flat_block_files": 0,
+    "pictures": 2110
+  }
+}
